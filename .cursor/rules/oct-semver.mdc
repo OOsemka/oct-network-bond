@@ -1,0 +1,31 @@
+---
+description: OCT two-axis versioning — extension semver plus OpenShift minor; no auto-upgrade
+alwaysApply: true
+---
+
+# OCT versioning (semver × OpenShift)
+
+Two axes. Do not collapse them into a single `:4.22` tag.
+
+1. **Extension semver** (`version`, git tag `v1.2.0`, image `:1.2.0`).
+2. **OpenShift minor** (`openshift` list, optional branch `ocp-4.22` for PF/API).
+
+```yaml
+spec:
+  consolePlugin: oct-example
+  defaultChannel: stable
+  pinVersion: "1.1.0"          # optional; Add stays on this semver
+  versions:
+    - version: "1.1.0"
+      channel: stable
+      openshift: ["4.21", "4.22"]
+      image: quay.io/org/oct-example:1.1.0
+      gitRef: v1.1.0
+    - version: "1.2.0"
+      channel: stable
+      openshift: ["4.22"]
+      image: quay.io/org/oct-example:1.2.0
+      gitRef: v1.2.0
+```
+
+**Add** = newest **stable** semver whose `openshift` includes the cluster. **Update** is a click; never auto. **Enable** does not change the image. **Remove** disables this plugin only. One ConsolePlugin name = one running version. Pin with `pinVersion` / not clicking Update. Prefer `:1.2.0` or `:1.2.0-ocp4.22` when APIs diverge. No live-cluster auto-migrate.

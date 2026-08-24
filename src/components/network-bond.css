@@ -1,0 +1,41 @@
+/* Network Bond tool. Prefix: netbond- */
+
+.netbond-lead {
+  max-width: 48rem;
+  color: var(--pf-t--global--text--color--subtle, #6a6e73);
+}
+
+.netbond-mac {
+  font-family: var(--pf-t--global--font--family--mono, monospace);
+  font-size: var(--pf-t--global--font--size--sm, 0.875rem);
+}
+
+.netbond-enslaved {
+  color: var(--pf-t--global--text--color--subtle, #6a6e73);
+  font-size: var(--pf-t--global--font--size--xs, 0.75rem);
+  margin-top: 2px;
+}
+
+.netbond-table-wrap {
+  overflow: auto;
+  max-height: 28rem;
+}
+
+.netbond-review-yaml {
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.netbond-actions {
+  padding-top: var(--pf-t--global--spacer--md, 16px);
+}
+
+.netbond-mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-t--global--spacer--sm, 8px);
+}
+
+.netbond-mcp-item {
+  max-width: 48rem;
+}
