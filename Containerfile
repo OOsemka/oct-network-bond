@@ -2,11 +2,13 @@ FROM docker.io/library/node:20-alpine AS build
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --legacy-peer-deps
+RUN corepack enable
+
+COPY package.json yarn.lock .yarnrc.yml ./
+RUN yarn install --immutable
 
 COPY . .
-RUN rm -rf dist && NODE_ENV=production npx webpack --config webpack.config.js
+RUN yarn build
 
 FROM docker.io/library/nginx:1.27-alpine
 
