@@ -30,6 +30,7 @@ Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`oc
 - Route `/community-tools/network/bond`
 - NIC discovery from NodeNetworkState, grouping by MachineConfigPool
 - Creating NodeNetworkConfigurationPolicy (implementation detail; UI says Network Bond)
+- Removing a bond: apply NNCP `state: absent` first (NMState does **not** drop a live bond when the create-NNCP is deleted). Wait for NNCE/NNCP SuccessfullyConfigured, then delete the policy. **Never** absent the bond (or parent interface) that `br-ex` uses — that is the OVN default network and taking it absent bricks the node. Protection is per apply-set: if any selected MCP/node has br-ex on that bond, Remove is disabled.
 
 ## Storefront registration
 

@@ -78,6 +78,21 @@ export const NodeNetworkConfigurationPolicyModel: K8sModel = {
   namespaced: false,
 };
 
+/**
+ * Per-node enactment of an NNCP. The NMState operator applies policies to matching
+ * nodes (typically the same labels as a MachineConfigPool); each node gets an NNCE.
+ */
+export const NodeNetworkConfigurationEnactmentModel: K8sModel = {
+  apiVersion: 'v1beta1',
+  apiGroup: 'nmstate.io',
+  kind: 'NodeNetworkConfigurationEnactment',
+  abbr: 'NNCE',
+  label: 'NodeNetworkConfigurationEnactment',
+  labelPlural: 'NodeNetworkConfigurationEnactments',
+  plural: 'nodenetworkconfigurationenactments',
+  namespaced: false,
+};
+
 /** Cluster-scoped Machine Config Operator pool. Network Bond groups nodes by MCP. */
 export const MachineConfigPoolModel: K8sModel = {
   apiVersion: 'v1',

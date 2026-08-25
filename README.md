@@ -4,6 +4,8 @@
 
 Standalone OpenShift Console plugin that bonds physical NICs by MachineConfigPool using NMState NodeNetworkConfigurationPolicy.
 
+Deleting a policy does **not** remove a live Linux bond. **Remove** applies `state: absent` first, waits for NMState, then deletes the policy. The bond that carries `br-ex` (cluster default network) cannot be removed.
+
 - **Plugin ID:** `oct-network-bond`
 - **Image:** `quay.io/cjanisze/oct-network-bond:1.1.0-ocp4.22` (`<semver>-ocp<major.minor>`; aliases `:1.1.0` / `:4.22` may still exist)
 - **Git:** https://github.com/OOsemka/oct-network-bond — `main` / optional `ocp-4.22` when PF/API differ; tags `v1.x.x`

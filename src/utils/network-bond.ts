@@ -41,6 +41,22 @@ export type NodeKindLite = {
   };
 };
 
+export type NmstateVlan = {
+  'base-iface'?: string;
+  id?: number;
+};
+
+export type NmstateBridgePort = {
+  name?: string;
+};
+
+export type NmstateRoute = {
+  destination?: string;
+  'next-hop-address'?: string;
+  'next-hop-interface'?: string;
+  'table-id'?: number;
+};
+
 export type NmstateInterfaceStatus = {
   name?: string;
   type?: string;
@@ -52,6 +68,20 @@ export type NmstateInterfaceStatus = {
     speed?: number;
     'auto-negotiation'?: boolean;
     duplex?: string;
+  };
+  vlan?: NmstateVlan;
+  bridge?: {
+    port?: Array<NmstateBridgePort | string>;
+  };
+  'link-aggregation'?: {
+    mode?: string;
+    port?: string[];
+    options?: Record<string, unknown>;
+  };
+  ipv4?: {
+    enabled?: boolean;
+    dhcp?: boolean;
+    address?: Array<{ ip?: string; 'prefix-length'?: number }>;
   };
 };
 
@@ -65,6 +95,10 @@ export type NodeNetworkStateKind = {
   status?: {
     currentState?: {
       interfaces?: NmstateInterfaceStatus[];
+      routes?: {
+        running?: NmstateRoute[];
+        config?: NmstateRoute[];
+      };
     };
   };
 };
@@ -82,6 +116,25 @@ export type NncpResource = {
   };
 };
 
+export type K8sCondition = {
+  type?: string;
+  status?: string;
+  reason?: string;
+  message?: string;
+  lastHeartbeatTime?: string;
+  lastTransitionTime?: string;
+};
+
+export type NncpDesiredInterface = {
+  name?: string;
+  type?: string;
+  state?: string;
+  'link-aggregation'?: {
+    port?: string[];
+  };
+  vlan?: NmstateVlan;
+};
+
 /** Watched NNCP (looser than the policy we create). */
 export type NncpKind = {
   apiVersion?: string;
@@ -89,15 +142,32 @@ export type NncpKind = {
   metadata: {
     name: string;
     labels?: Record<string, string>;
+    generation?: number;
+    resourceVersion?: string;
+    uid?: string;
   };
   spec?: {
     nodeSelector?: Record<string, string>;
     desiredState?: {
-      interfaces?: Array<{
-        name?: string;
-        type?: string;
-      }>;
+      interfaces?: NncpDesiredInterface[];
     };
+  };
+  status?: {
+    conditions?: K8sCondition[];
+  };
+};
+
+/** Per-node apply of an NNCP. Name is `{node}.{policy}`; labels `nmstate.io/policy` + `nmstate.io/node`. */
+export type NnceKind = {
+  apiVersion?: string;
+  kind?: string;
+  metadata: {
+    name: string;
+    labels?: Record<string, string>;
+  };
+  status?: {
+    policyGeneration?: number;
+    conditions?: K8sCondition[];
   };
 };
 
@@ -590,7 +660,7 @@ export function suggestBondName(used: Set<string>, preferred = 'bond0'): string 
   return 'bond99';
 }
 
-type NncpTarget = {
+export type NncpTarget = {
   mcpName?: string;
   nodeSelector: Record<string, string>;
   nodeNames: string[];
@@ -645,7 +715,7 @@ export function planNncpTargets(groups: McpNicGroup[]): {
   };
 }
 
-function sanitizeK8sName(raw: string): string {
+export function sanitizeK8sName(raw: string): string {
   const s = raw
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')

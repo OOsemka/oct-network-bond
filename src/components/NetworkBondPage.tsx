@@ -3,6 +3,9 @@ import {
   DocumentTitle,
   ListPageHeader,
   k8sCreate,
+  k8sDelete,
+  k8sGet,
+  k8sUpdate,
   useK8sWatchResource,
 } from '@openshift-console/dynamic-plugin-sdk';
 import { useTranslation } from 'react-i18next';
@@ -33,6 +36,10 @@ import {
   HelperText,
   HelperTextItem,
   Label,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
   PageSection,
   Radio,
   Spinner,
@@ -43,13 +50,14 @@ import {
 } from '@patternfly/react-core';
 import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
 import { NetworkIcon, ExclamationCircleIcon } from '@patternfly/react-icons';
-import React, { FC, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   MachineConfigPoolModel,
   NodeModel,
   NodeNetworkStateModel,
   NodeNetworkConfigurationPolicyModel,
+  NodeNetworkConfigurationEnactmentModel,
 } from '../utils/k8s-resources';
 import {
   BOND_MODES,
@@ -61,6 +69,7 @@ import {
   McpNicGroup,
   NodeKindLite,
   NodeNetworkStateKind,
+  NnceKind,
   NncpKind,
   buildMcpNicGroups,
   canSelectMcpWith,
@@ -72,9 +81,21 @@ import {
   physicalNicsFromNns,
   planMcpNncps,
 } from '../utils/network-bond';
+import {
+  BondInventoryItem,
+  NNCP_APPLY_POLL_MS,
+  NNCP_APPLY_TIMEOUT_MS,
+  listBondInventory,
+  nnceProgressSummary,
+  nncpApplyOutcome,
+  nncpFailMessage,
+  planBondRemoval,
+  sleep,
+} from '../utils/bond-remove';
 import { toYaml } from '../utils/yaml';
 import dashboardLogger from '../utils/logger';
 import CommunityDisclaimer from './CommunityDisclaimer';
+import ExistingBondsCard from './ExistingBondsCard';
 
 import './network-bond.css';
 
@@ -126,6 +147,16 @@ const NetworkBondPage: FC = () => {
     namespaced: false,
   });
 
+  const [nnceList] = useK8sWatchResource<K8sResourceCommon[]>({
+    groupVersionKind: {
+      group: NodeNetworkConfigurationEnactmentModel.apiGroup,
+      version: NodeNetworkConfigurationEnactmentModel.apiVersion,
+      kind: NodeNetworkConfigurationEnactmentModel.kind,
+    },
+    isList: true,
+    namespaced: false,
+  });
+
   const [selectedMcpNames, setSelectedMcpNames] = useState<string[]>([]);
   const [selectedPorts, setSelectedPorts] = useState<string[]>([]);
   const [bondName, setBondName] = useState('bond0');
@@ -141,11 +172,19 @@ const NetworkBondPage: FC = () => {
     policyNames: [],
     bondName: '',
   });
+  const [removeTarget, setRemoveTarget] = useState<BondInventoryItem | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removePhase, setRemovePhase] = useState('');
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removeSuccess, setRemoveSuccess] = useState<string | null>(null);
 
   const nodes = useMemo(() => (nodeList as NodeKindLite[]) || [], [nodeList]);
   const nns = useMemo(() => (nnsList as NodeNetworkStateKind[]) || [], [nnsList]);
   const mcps = useMemo(() => (mcpList as MachineConfigPoolKind[]) || [], [mcpList]);
   const nncps = useMemo(() => (nncpList as NncpKind[]) || [], [nncpList]);
+  const nnces = useMemo(() => (nnceList as NnceKind[]) || [], [nnceList]);
+  const nncesRef = useRef(nnces);
+  nncesRef.current = nnces;
 
   const allNics = useMemo(() => physicalNicsFromNns(nns, nodes), [nns, nodes]);
   const nnsNames = useMemo(() => new Set(nns.map((item) => item.metadata.name)), [nns]);
@@ -161,6 +200,36 @@ const NetworkBondPage: FC = () => {
   );
 
   const selectedFingerprint = selectedGroups[0]?.identical ? selectedGroups[0].fingerprint : '';
+
+  const scopeNodeNames = useMemo(() => {
+    if (selectedGroups.length > 0) {
+      return Array.from(new Set(selectedGroups.flatMap((g) => g.nodeNames))).sort();
+    }
+    return nns.map((item) => item.metadata.name).sort();
+  }, [selectedGroups, nns]);
+
+  const bondInventory = useMemo(
+    () =>
+      listBondInventory({
+        nnsList: nns,
+        nncps,
+        nodes,
+        scopeNodeNames,
+      }),
+    [nns, nncps, nodes, scopeNodeNames],
+  );
+
+  const removePlanPreview = useMemo(() => {
+    if (!removeTarget) return null;
+    return planBondRemoval({
+      bondName: removeTarget.name,
+      selectedGroups,
+      nodes,
+      nnsList: nns,
+      nncps,
+      scopeNodeNames,
+    });
+  }, [removeTarget, selectedGroups, nodes, nns, nncps, scopeNodeNames]);
 
   const createdNames = created.policyNames;
   const createdBondName = created.bondName;
@@ -308,6 +377,160 @@ const NetworkBondPage: FC = () => {
     clearCreated();
     setBondName(nextName);
   }, [plan.suggestedBondName, clearCreated]);
+
+  const waitForNncpApply = useCallback(
+    async (name: string, minGeneration: number, startedAtMs: number) => {
+      const deadline = Date.now() + NNCP_APPLY_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        const nncp = (await k8sGet({
+          model: NodeNetworkConfigurationPolicyModel,
+          name,
+        })) as NncpKind;
+        const outcome = nncpApplyOutcome(nncp, {
+          minGeneration,
+          startedAtMs,
+          nnces: nncesRef.current,
+        });
+        const progress = nnceProgressSummary(nncesRef.current, name, minGeneration);
+        if (progress.total > 0) {
+          setRemovePhase(
+            t('Waiting for NMState to apply {{name}} ({{ready}}/{{total}} nodes)...', {
+              name,
+              ready: String(progress.ready),
+              total: String(progress.total),
+            }),
+          );
+        } else {
+          setRemovePhase(t('Waiting for NMState to apply {{name}}...', { name }));
+        }
+        if (outcome === 'success') return;
+        if (outcome === 'failed') {
+          throw new Error(nncpFailMessage(nncp));
+        }
+        await sleep(NNCP_APPLY_POLL_MS);
+      }
+      throw new Error(t('Timed out waiting for NMState to apply {{name}}', { name }));
+    },
+    [t],
+  );
+
+  const closeRemoveModal = useCallback(() => {
+    if (removing) return;
+    setRemoveTarget(null);
+    setRemoveError(null);
+  }, [removing]);
+
+  const handleRemove = useCallback(
+    async (item: BondInventoryItem) => {
+      const plan = planBondRemoval({
+        bondName: item.name,
+        selectedGroups,
+        nodes,
+        nnsList: nns,
+        nncps,
+        scopeNodeNames,
+      });
+      if (plan.issues.length > 0) {
+        const msg = plan.issues.map((issue) => t(issue.key, issue.values)).join(' ');
+        dashboardLogger.warn(LOG_ACTION, 'Remove blocked', msg);
+        setRemoveError(msg);
+        return;
+      }
+
+      setRemoving(true);
+      setRemoveError(null);
+      setRemoveSuccess(null);
+      dashboardLogger.info(
+        LOG_ACTION,
+        'Remove started',
+        `bond=${item.name} patch=${plan.patchPolicyNames.join(',')} create=${plan.createPolicies
+          .map((p) => p.metadata.name)
+          .join(',')} delete=${plan.deletePolicyNames.join(',')} skipApply=${plan.skipApply}`,
+      );
+
+      try {
+        const applied: string[] = [];
+        if (!plan.skipApply) {
+          for (const name of plan.patchPolicyNames) {
+            setRemovePhase(t('Setting {{name}} to absent...', { name: item.name }));
+            const current = (await k8sGet({
+              model: NodeNetworkConfigurationPolicyModel,
+              name,
+            })) as NncpKind;
+            const updated = (await k8sUpdate({
+              model: NodeNetworkConfigurationPolicyModel,
+              data: {
+                ...current,
+                spec: {
+                  ...(current.spec || {}),
+                  nodeSelector: current.spec?.nodeSelector || {},
+                  desiredState: plan.desiredState,
+                },
+              } as unknown as K8sResourceCommon,
+            })) as NncpKind;
+            const gen = updated.metadata.generation ?? (current.metadata.generation || 0) + 1;
+            applied.push(updated.metadata.name);
+            await waitForNncpApply(updated.metadata.name, gen, Date.now());
+          }
+
+          for (const policy of plan.createPolicies) {
+            setRemovePhase(t('Setting {{name}} to absent...', { name: item.name }));
+            const createdPolicy = (await k8sCreate({
+              model: NodeNetworkConfigurationPolicyModel,
+              data: policy as unknown as K8sResourceCommon,
+            })) as NncpKind;
+            const gen = createdPolicy.metadata.generation ?? 1;
+            applied.push(createdPolicy.metadata.name);
+            await waitForNncpApply(createdPolicy.metadata.name, gen, Date.now());
+          }
+        }
+
+        dashboardLogger.info(
+          LOG_ACTION,
+          'Absent applied',
+          applied.length > 0 ? applied.join(',') : 'skipped',
+        );
+
+        for (const name of plan.deletePolicyNames) {
+          setRemovePhase(t('Deleting policy {{name}}...', { name }));
+          await k8sDelete({
+            model: NodeNetworkConfigurationPolicyModel,
+            resource: {
+              apiVersion: 'nmstate.io/v1',
+              kind: 'NodeNetworkConfigurationPolicy',
+              metadata: { name },
+            },
+          });
+        }
+
+        dashboardLogger.info(
+          LOG_ACTION,
+          'Remove succeeded',
+          `bond=${item.name} policies=${plan.deletePolicyNames.join(',')}`,
+        );
+        setRemoveSuccess(
+          plan.skipApply
+            ? t('Deleted leftover policy for {{name}}.', { name: item.name })
+            : t('Removed bond {{name}}.', { name: item.name }),
+        );
+        setRemoveTarget(null);
+        setRemovePhase('');
+      } catch (err) {
+        const msg = getK8sErrorMessage(err);
+        dashboardLogger.error(LOG_ACTION, 'Remove failed', msg);
+        setRemoveError(msg);
+      } finally {
+        setRemoving(false);
+      }
+    },
+    [selectedGroups, nodes, nns, nncps, scopeNodeNames, t, waitForNncpApply],
+  );
+
+  const requestRemove = useCallback((item: BondInventoryItem) => {
+    setRemoveTarget(item);
+    setRemoveError(null);
+    setRemoveSuccess(null);
+  }, []);
 
   const nnsReady = nnsLoaded || Boolean(nnsError);
   const nodesReady = nodesLoaded || Boolean(nodesError);
@@ -500,7 +723,7 @@ const NetworkBondPage: FC = () => {
             </p>
             <p className="netbond-lead">
               {t(
-                'Apply progress is on the NodeNetworkConfigurationPolicy (oc get nncp). In the console, open Networking → NMState if that UI is installed. Apply progress is on the NodeNetworkConfigurationPolicy (oc get nncp).',
+                'NMState applies each policy to matching nodes (the same grouping as MachineConfigPools). Deleting a policy does not remove a live bond — Remove sets the bond to absent first. The bond that carries br-ex (cluster default network) cannot be removed.',
               )}
             </p>
           </StackItem>
@@ -598,6 +821,24 @@ const NetworkBondPage: FC = () => {
                   </Stack>
                 </CardBody>
               </Card>
+            </StackItem>
+          )}
+
+          {showBondForm && (
+            <StackItem>
+              <ExistingBondsCard
+                items={bondInventory}
+                busyName={removing ? removeTarget?.name || null : null}
+                onRemove={requestRemove}
+              />
+            </StackItem>
+          )}
+
+          {removeSuccess && (
+            <StackItem>
+              <Alert variant="success" title={t('Bond removed')} isInline isLiveRegion>
+                {removeSuccess}
+              </Alert>
             </StackItem>
           )}
 
@@ -990,6 +1231,87 @@ const NetworkBondPage: FC = () => {
           )}
         </Stack>
       </PageSection>
+
+      <Modal
+        isOpen={Boolean(removeTarget)}
+        onClose={(_event) => closeRemoveModal()}
+        variant="small"
+        aria-labelledby="netbond-remove-title"
+        aria-describedby="netbond-remove-desc"
+      >
+        <ModalHeader
+          title={
+            removeTarget?.nncpAlreadyAbsent && !removeTarget.inNns
+              ? t('Delete leftover policy')
+              : t('Remove bond')
+          }
+          labelId="netbond-remove-title"
+          titleIconVariant="warning"
+        />
+        <ModalBody id="netbond-remove-desc">
+          {removeTarget && (
+            <Stack hasGutter>
+              {removePlanPreview?.issues.map((issue) => (
+                <StackItem key={issue.key}>
+                  <Alert variant="danger" isInline title={t(issue.key, issue.values)} />
+                </StackItem>
+              ))}
+              {removePlanPreview?.warnings.map((w) => (
+                <StackItem key={w.key}>
+                  <Alert variant="warning" isInline title={t(w.key, w.values)} />
+                </StackItem>
+              ))}
+              <StackItem>
+                {removeTarget.nncpAlreadyAbsent && !removeTarget.inNns
+                  ? t(
+                      'Bond {{name}} is already absent on the nodes. Delete the leftover policy {{policies}}?',
+                      {
+                        name: removeTarget.name,
+                        policies: removeTarget.nncpNames.join(', ') || '—',
+                      },
+                    )
+                  : t(
+                      'This sets bond {{name}} to absent with NMState, waits for the apply to succeed, then deletes the policy. Member NICs become standalone ethernet. This cannot be undone from this page.',
+                      { name: removeTarget.name },
+                    )}
+              </StackItem>
+              {removePhase && removing && (
+                <StackItem>
+                  <Alert variant="info" isInline title={removePhase} />
+                </StackItem>
+              )}
+              {removeError && (
+                <StackItem>
+                  <Alert variant="danger" isInline title={t('Failed to remove bond')}>
+                    {removeError}
+                  </Alert>
+                </StackItem>
+              )}
+            </Stack>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            variant="danger"
+            onClick={() => removeTarget && handleRemove(removeTarget)}
+            isDisabled={
+              removing ||
+              !removeTarget?.canRemove ||
+              Boolean(removePlanPreview && removePlanPreview.issues.length > 0)
+            }
+            isLoading={removing}
+          >
+            {removing
+              ? t('Removing...')
+              : removeTarget?.nncpAlreadyAbsent && !removeTarget.inNns
+                ? t('Delete policy')
+                : t('Remove bond')}
+          </Button>
+          <Button variant="link" onClick={closeRemoveModal} isDisabled={removing}>
+            {t('Cancel')}
+          </Button>
+        </ModalFooter>
+      </Modal>
     </>
   );
 };

@@ -39,3 +39,15 @@
 .netbond-mcp-item {
   max-width: 48rem;
 }
+
+.netbond-bond-flag {
+  margin-top: 4px;
+}
+
+.netbond-bond-alert {
+  margin-top: var(--pf-t--global--spacer--md, 16px);
+}
+
+.netbond-remove-wrap {
+  display: inline-block;
+}
