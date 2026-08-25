@@ -5,7 +5,7 @@
 Standalone OpenShift Console plugin that bonds physical NICs by MachineConfigPool using NMState NodeNetworkConfigurationPolicy.
 
 - **Plugin ID:** `oct-network-bond`
-- **Image:** `quay.io/cjanisze/oct-network-bond:1.1.0` (semver; `:4.22` still published)
+- **Image:** `quay.io/cjanisze/oct-network-bond:1.1.0-ocp4.22` (`<semver>-ocp<major.minor>`; aliases `:1.1.0` / `:4.22` may still exist)
 - **Git:** `main` / optional `ocp-4.22` when PF/API differ; tags `v1.x.x`
 
 Validated on OpenShift **4.22** (PatternFly 6). Open from **Community Tools → Network** after the storefront (`oct-storefront`) and this plugin are enabled.

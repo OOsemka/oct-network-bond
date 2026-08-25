@@ -9,4 +9,4 @@ Keep a **git line per OpenShift minor** when PF or APIs diverge. `main` = newest
 
 Catalog `versions[].openshift` lists which minors that **semver** supports. Never default a 4.21 image onto 4.22 if a 4.22-capable row exists.
 
-Semver tags, Add/Update/pin, and image tagging: **`oct-semver.mdc`**.
+Image tags are always `<semver>-ocp<major.minor>` (e.g. `1.1.0-ocp4.22`). Semver, Add/Update/pin, and tagging: **`oct-semver.mdc`**.
