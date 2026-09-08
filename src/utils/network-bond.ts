@@ -10,7 +10,43 @@ export type BondMode =
   | 'active-backup'
   | 'balance-xor'
   | 'balance-tlb'
-  | 'balance-alb';
+  | 'balance-alb'
+  | 'balance-slb';
+
+export type XmitHashPolicy = 'layer2' | 'layer2+3' | 'layer3+4';
+
+export type BondModeInfo = {
+  value: BondMode;
+  label: string;
+  category: 'linux' | 'ovs';
+  warning?: string;
+  description?: string;
+};
+
+export const XMIT_HASH_POLICIES: {
+  value: XmitHashPolicy;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'layer2',
+    label: 'layer2',
+    description:
+      'Hashes on source/destination MAC addresses. Best for traffic staying within the same L2 segment.',
+  },
+  {
+    value: 'layer2+3',
+    label: 'layer2+3',
+    description:
+      'Hashes on MAC + IP addresses. Better distribution for routed traffic across subnets.',
+  },
+  {
+    value: 'layer3+4',
+    label: 'layer3+4',
+    description:
+      'Hashes on IP addresses + TCP/UDP ports. Best distribution for diverse traffic patterns (many connections to different ports).',
+  },
+];
 
 export type Ipv4Mode = 'none' | 'dhcp' | 'static';
 
@@ -265,12 +301,35 @@ const EXCLUDED_NAME =
 const LINUX_IFACE_NAME = /^[a-zA-Z][a-zA-Z0-9_-]{0,14}$/;
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
-export const BOND_MODES: { value: BondMode; label: string }[] = [
-  { value: '802.3ad', label: '802.3ad (LACP)' },
-  { value: 'active-backup', label: 'Active-Backup' },
-  { value: 'balance-xor', label: 'Balance XOR' },
-  { value: 'balance-tlb', label: 'Balance TLB' },
-  { value: 'balance-alb', label: 'Balance ALB' },
+export const BOND_MODES: BondModeInfo[] = [
+  { value: '802.3ad', label: '802.3ad (LACP)', category: 'linux' },
+  { value: 'active-backup', label: 'Active-Backup', category: 'linux' },
+  {
+    value: 'balance-xor',
+    label: 'Balance XOR',
+    category: 'linux',
+    warning: 'Not recommended: may not be supported by all network switches',
+  },
+  {
+    value: 'balance-tlb',
+    label: 'Balance TLB',
+    category: 'linux',
+    warning: 'Not recommended: requires specific NIC driver support',
+  },
+  {
+    value: 'balance-alb',
+    label: 'Balance ALB',
+    category: 'linux',
+    warning:
+      'Not recommended: requires specific NIC driver support and may cause issues with some switches',
+  },
+  {
+    value: 'balance-slb',
+    label: 'Balance SLB (OVS)',
+    category: 'ovs',
+    description:
+      'Distributes traffic based on source MAC address hash. Periodically rebalances flows for even load distribution across member ports.',
+  },
 ];
 
 export function formatSpeed(mbps?: number): string {
@@ -750,8 +809,13 @@ export function buildBondDesiredState(opts: {
   miimon: string;
   ports: string[];
   ipv4: BondIpv4Config;
+  xmitHashPolicy?: XmitHashPolicy;
 }): Record<string, unknown> {
   const uniquePorts = Array.from(new Set(opts.ports));
+  const linkAggOptions: Record<string, string> = { miimon: String(opts.miimon) };
+  if (opts.bondMode === '802.3ad' && opts.xmitHashPolicy) {
+    linkAggOptions.xmit_hash_policy = opts.xmitHashPolicy;
+  }
   const interfaces: Record<string, unknown>[] = [
     {
       name: opts.bondName,
@@ -761,7 +825,7 @@ export function buildBondDesiredState(opts: {
       ipv6: { enabled: false },
       'link-aggregation': {
         mode: opts.bondMode,
-        options: { miimon: String(opts.miimon) },
+        options: linkAggOptions,
         port: uniquePorts,
       },
     },
@@ -798,6 +862,7 @@ function buildNncp(opts: {
   miimon: string;
   ports: string[];
   ipv4: BondIpv4Config;
+  xmitHashPolicy?: XmitHashPolicy;
 }): NncpResource {
   return {
     apiVersion: 'nmstate.io/v1',
@@ -817,6 +882,7 @@ function buildNncp(opts: {
         miimon: opts.miimon,
         ports: opts.ports,
         ipv4: opts.ipv4,
+        xmitHashPolicy: opts.xmitHashPolicy,
       }),
     },
   };
@@ -836,6 +902,7 @@ export function planMcpNncps(opts: {
   bondMode: BondMode;
   miimon: string;
   ipv4: BondIpv4Config;
+  xmitHashPolicy?: XmitHashPolicy;
   /** NNCP names created in this browser session — do not treat as a name conflict. */
   ignoreNncpNames?: string[];
   /** Bond interface names created in this browser session — do not treat as a name conflict. */
@@ -888,8 +955,12 @@ export function planMcpNncps(opts: {
   }
 
   const ports = Array.from(new Set(opts.selectedPorts.map((p) => p.trim()).filter(Boolean)));
-  if (ports.length < 2) {
-    issues.push({ key: 'Select at least two NICs' });
+  if (ports.length < 1) {
+    issues.push({ key: 'Select at least one NIC' });
+  } else if (ports.length === 1) {
+    warnings.push({
+      key: 'Bonds typically require 2 or more NICs for redundancy and load balancing. A single-NIC bond provides no failover capability.',
+    });
   }
 
   const bondName = opts.bondName.trim();
@@ -979,6 +1050,7 @@ export function planMcpNncps(opts: {
       miimon: opts.miimon,
       ports,
       ipv4: opts.ipv4,
+      xmitHashPolicy: opts.xmitHashPolicy,
     });
   });
 

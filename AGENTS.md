@@ -22,7 +22,7 @@ Display name is **Network Bond**. No PVC or discovery sidecar.
 Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`ocp-X.Y`** when PatternFly or APIs diverge. Image tags **always** `<semver>-ocp<major.minor>` (e.g. `1.1.0-ocp4.22`). Storefront Add installs the newest stable semver compatible with the cluster; Update is explicit; one ConsolePlugin name runs one version.
 
 - Git: `main` tracks the newest supported minor (currently **4.22**). Optional `ocp-4.22`, `ocp-4.21`. Tags `v1.0.0`, `v1.1.0`.
-- Images: `oct-network-bond:1.1.0-ocp4.22`. Catalog `versions[].image` must be that combined tag. Never catalog `:1.1.0` or `:4.22` as the install image unless that exact combined tag exists and is public.
+- Images: `oct-network-bond:1.1.0-ocp4.22` and `:1.1.0-ocp4.21`. **Always publish both** OpenShift minor tags (same digest if bits match). Catalog `versions[].image` must be the combined tag. Never catalog `:1.1.0` or `:4.22` as the install image unless that exact combined tag exists and is public.
 - PatternFly 6 on 4.22; do not mix PF majors on one branch.
 
 ## What this plugin owns
@@ -43,6 +43,10 @@ Storefront **Add** can succeed while the plugin never becomes Ready (**Open** 40
 ## PatternFly 6
 
 No PatternFly CSS imports. Prefix CSS `nb-` / existing `network-bond-`.
+
+## No environment-specific hardcoding
+
+Never bake in lab networks, StorageClasses, hostnames, or similar. Bonds, VLANs, and interfaces come from the user’s form and live NMState — not from constants. See `.cursor/rules/oct-no-env-hardcoding.mdc`.
 
 ## Verify
 

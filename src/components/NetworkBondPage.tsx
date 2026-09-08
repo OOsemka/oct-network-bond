@@ -9,6 +9,7 @@ import {
   useK8sWatchResource,
 } from '@openshift-console/dynamic-plugin-sdk';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom-v5-compat';
 import {
   ActionGroup,
   Alert,
@@ -71,6 +72,8 @@ import {
   NodeNetworkStateKind,
   NnceKind,
   NncpKind,
+  XmitHashPolicy,
+  XMIT_HASH_POLICIES,
   buildMcpNicGroups,
   canSelectMcpWith,
   formatSpeed,
@@ -106,6 +109,7 @@ const nncpConsolePath = (name: string) =>
 
 const NetworkBondPage: FC = () => {
   const { t } = useTranslation('plugin__oct-network-bond');
+  const navigate = useNavigate();
 
   const [nnsList, nnsLoaded, nnsError] = useK8sWatchResource<K8sResourceCommon[]>({
     groupVersionKind: {
@@ -161,6 +165,7 @@ const NetworkBondPage: FC = () => {
   const [selectedPorts, setSelectedPorts] = useState<string[]>([]);
   const [bondName, setBondName] = useState('bond0');
   const [bondMode, setBondMode] = useState<BondMode>('802.3ad');
+  const [xmitHashPolicy, setXmitHashPolicy] = useState<XmitHashPolicy>('layer2');
   const [miimon, setMiimon] = useState('100');
   const [ipv4Mode, setIpv4Mode] = useState<Ipv4Mode>('none');
   const [ipAddress, setIpAddress] = useState('');
@@ -277,6 +282,7 @@ const NetworkBondPage: FC = () => {
         bondMode,
         miimon,
         ipv4,
+        xmitHashPolicy: bondMode === '802.3ad' ? xmitHashPolicy : undefined,
         ignoreNncpNames: createdNames,
         ignoreBondNames: createdBondName ? [createdBondName] : [],
       }),
@@ -290,6 +296,7 @@ const NetworkBondPage: FC = () => {
       bondMode,
       miimon,
       ipv4,
+      xmitHashPolicy,
       createdNames,
       createdBondName,
     ],
@@ -329,7 +336,7 @@ const NetworkBondPage: FC = () => {
   );
 
   const goNetworkHub = () => {
-    window.location.href = '/community-tools/network';
+    navigate('/community-tools/network');
   };
 
   const handleCreate = useCallback(async () => {
@@ -921,7 +928,7 @@ const NetworkBondPage: FC = () => {
                         <FormHelperText>
                           <HelperText>
                             <HelperTextItem>
-                              {t('Select at least two NICs. The same names are bonded on every targeted node.')}
+                              {t('Select NICs to include in the bond. Two or more NICs are recommended for redundancy. The same names are bonded on every targeted node.')}
                             </HelperTextItem>
                           </HelperText>
                         </FormHelperText>
@@ -974,11 +981,81 @@ const NetworkBondPage: FC = () => {
                         value={bondMode}
                         onChange={(_event, value) => setBondMode(value as BondMode)}
                       >
-                        {BOND_MODES.map((m) => (
-                          <FormSelectOption key={m.value} value={m.value} label={t(m.label)} />
+                        {BOND_MODES.filter((m) => m.category === 'linux').map((m) => (
+                          <FormSelectOption
+                            key={m.value}
+                            value={m.value}
+                            label={m.warning ? `${t(m.label)} ⚠` : t(m.label)}
+                          />
+                        ))}
+                        {BOND_MODES.filter((m) => m.category === 'ovs').map((m) => (
+                          <FormSelectOption
+                            key={m.value}
+                            value={m.value}
+                            label={t(m.label)}
+                          />
                         ))}
                       </FormSelect>
+                      {(() => {
+                        const selected = BOND_MODES.find((m) => m.value === bondMode);
+                        if (selected?.warning) {
+                          return (
+                            <FormHelperText>
+                              <HelperText>
+                                <HelperTextItem variant="warning">
+                                  {t(selected.warning)}
+                                </HelperTextItem>
+                              </HelperText>
+                            </FormHelperText>
+                          );
+                        }
+                        if (selected?.description) {
+                          return (
+                            <FormHelperText>
+                              <HelperText>
+                                <HelperTextItem>
+                                  {t(selected.description)}
+                                </HelperTextItem>
+                              </HelperText>
+                            </FormHelperText>
+                          );
+                        }
+                        return null;
+                      })()}
                     </FormGroup>
+
+                    {bondMode === '802.3ad' && (
+                      <FormGroup
+                        label={t('LACP Transmit Hash Policy')}
+                        fieldId="netbond-xmit-hash"
+                      >
+                        <FormSelect
+                          id="netbond-xmit-hash"
+                          value={xmitHashPolicy}
+                          onChange={(_event, value) =>
+                            setXmitHashPolicy(value as XmitHashPolicy)
+                          }
+                        >
+                          {XMIT_HASH_POLICIES.map((p) => (
+                            <FormSelectOption
+                              key={p.value}
+                              value={p.value}
+                              label={t(p.label)}
+                            />
+                          ))}
+                        </FormSelect>
+                        <FormHelperText>
+                          <HelperText>
+                            <HelperTextItem>
+                              {t(
+                                XMIT_HASH_POLICIES.find((p) => p.value === xmitHashPolicy)
+                                  ?.description || '',
+                              )}
+                            </HelperTextItem>
+                          </HelperText>
+                        </FormHelperText>
+                      </FormGroup>
+                    )}
 
                     <FormGroup label={t('miimon')} fieldId="netbond-miimon">
                       <TextInput

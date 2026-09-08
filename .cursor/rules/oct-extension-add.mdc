@@ -15,4 +15,6 @@ Before a catalog tile ships:
 4. **href matches routes.** Catalog `spec.href` must match `console-extensions.json` (`oct-baremetal`: `/baremetal/nodes`; `oct-network-bond`: `/community-tools/network/bond` unless those routes changed).
 5. **Add success is not Ready.** Confirm the plugin Deployment is Running before calling the tile done.
 
+Never hardcode lab StorageClass names, networks, or other cluster-specific values (`oct-no-env-hardcoding.mdc`).
+
 Canonical checklist: storefront `docs/extension-standard.md`. Do not `oc apply` unless asked.

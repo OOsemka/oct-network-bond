@@ -39,6 +39,8 @@ spec:
 
 **Hard rule:** never list a catalog row for (version, OpenShift minor) unless that **exact** combined tag exists and is **public**. That is what caused Add-success / Open-404 (`:1.1.0` cataloged, only `:4.22` published).
 
+**Always publish both OpenShift minors.** Every published image (plugin, sidecars, storefront, catalog-service when rebuilt) gets **both** tags: `<semver>-ocp4.21` and `<semver>-ocp4.22`. Same bits → two tags on one digest. Never catalog a (version, minor) unless that exact public tag exists. Catalog `versions[]` lists both minors when the tags exist.
+
 Bare `:4.22` and `:1.1.0` may remain as extra aliases; catalog `image` and install YAML must use the combined tag. Same bits on two minors → two tags on the same digest (`1.1.0-ocp4.21` and `1.1.0-ocp4.22`), not one ambiguous `:1.1.0` as the only catalog image.
 
 **Add** = newest stable semver whose `openshift` includes the cluster. **Update** is a click; never auto. **Enable** does not change the image. One ConsolePlugin name = one running version. No live-cluster auto-migrate. Add-must-go-Ready: **`oct-extension-add.mdc`**.
