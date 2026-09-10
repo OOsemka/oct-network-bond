@@ -21,15 +21,13 @@ Old plugin ID `community-network-bond` requires a reinstall.
 
 | Mode | Name | Notes |
 | --- | --- | --- |
-| 0 | `balance-rr` | Round-robin. UI warns "not recommended" (packet reordering). |
 | 1 | `active-backup` | Safe default. |
-| 2 | `balance-xor` | XOR hash. |
-| 3 | `broadcast` | UI warns "not recommended" (bandwidth waste). |
+| 2 | `balance-xor` | XOR hash. UI warns "not recommended". |
 | 4 | `802.3ad` (LACP) | Requires switch support. Xmit hash policy: `layer2`, `layer2+3`, `layer3+4`. |
-| 5 | `balance-tlb` | Adaptive transmit LB. |
-| 6 | `balance-alb` | Adaptive LB. |
+| 5 | `balance-tlb` | Adaptive transmit LB. UI warns "not recommended". |
+| 6 | `balance-alb` | Adaptive LB. UI warns "not recommended". |
 
-**OVS bonds:** `active-backup`, `balance-slb`.
+**OVS bonds:** `balance-slb`.
 
 - **Single-NIC bond** is allowed but shows a warning ("single-NIC bond provides no redundancy").
 - **MachineConfigPool targeting:** MCPs fingerprinted by physical NIC names. Only MCPs with identical NIC sets can be combined. One NNCP per disjoint MCP; per-hostname selectors when MCPs overlap.

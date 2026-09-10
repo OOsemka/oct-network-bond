@@ -38,18 +38,15 @@ Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`oc
 
 | Type | Mode | Description | Warnings |
 | --- | --- | --- | --- |
-| Linux | `balance-rr` (0) | Round-robin | Not recommended for most workloads (packet reordering) |
 | Linux | `active-backup` (1) | Active-backup | Safe default |
-| Linux | `balance-xor` (2) | XOR | — |
-| Linux | `broadcast` (3) | Broadcast | Not recommended (high bandwidth waste) |
+| Linux | `balance-xor` (2) | XOR | Not recommended |
 | Linux | `802.3ad` (4) | LACP | Requires switch support; exposes xmit hash policy |
-| Linux | `balance-tlb` (5) | Adaptive transmit load balancing | — |
-| Linux | `balance-alb` (6) | Adaptive load balancing | — |
-| OVS | `active-backup` | OVS active-backup | — |
+| Linux | `balance-tlb` (5) | Adaptive transmit load balancing | Not recommended |
+| Linux | `balance-alb` (6) | Adaptive load balancing | Not recommended |
 | OVS | `balance-slb` | OVS source-load balancing | — |
 
-- **Not-recommended warnings** are shown in the UI for `balance-rr` and `broadcast`.
-- **LACP xmit hash policy** (802.3ad only): `layer2`, `layer2+3`, `layer3+4`. Defaults to `layer2` if unset.
+- **Not-recommended warnings** are shown in the UI for `balance-xor`, `balance-tlb`, and `balance-alb`. The mode dropdown appends ⚠ to those labels and shows PatternFly warning HelperText.
+- **LACP xmit hash policy** (802.3ad only): `layer2`, `layer2+3`, `layer3+4`. Hash policy FormSelect appears only when `bondMode === '802.3ad'`.
 - **Single-NIC bond** is allowed but shows a warning ("single-NIC bond provides no redundancy").
 
 ## MachineConfigPool targeting
