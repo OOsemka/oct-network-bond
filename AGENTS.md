@@ -67,7 +67,7 @@ Storefront **Add** can succeed while the plugin never becomes Ready (**Open** 40
 
 ## PatternFly 6
 
-No PatternFly CSS imports. Prefix CSS `nb-` / existing `network-bond-`.
+No PatternFly CSS imports. Prefix CSS `netbond-` / existing `network-bond-`.
 
 ## No environment-specific hardcoding
 
