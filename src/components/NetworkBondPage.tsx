@@ -98,6 +98,7 @@ import {
 import { toYaml } from '../utils/yaml';
 import dashboardLogger from '../utils/logger';
 import CommunityDisclaimer from './CommunityDisclaimer';
+import NmstateSetup, { useNmstateMissing } from './NmstateSetup';
 import ExistingBondsCard from './ExistingBondsCard';
 
 import './network-bond.css';
@@ -539,7 +540,8 @@ const NetworkBondPage: FC = () => {
     setRemoveSuccess(null);
   }, []);
 
-  const nnsReady = nnsLoaded || Boolean(nnsError);
+  const nmstateMissing = useNmstateMissing();
+  const nnsReady = nnsLoaded || Boolean(nnsError) || nmstateMissing;
   const nodesReady = nodesLoaded || Boolean(nodesError);
   const mcpsReady = mcpsLoaded || Boolean(mcpError);
 
@@ -627,18 +629,8 @@ const NetworkBondPage: FC = () => {
       );
     }
 
-    if (nnsError && isMissingCrdError(nnsError)) {
-      return (
-        <EmptyState
-          titleText={t('NMState operator not found — NodeNetworkState is required to list NICs.')}
-          icon={NetworkIcon}
-          headingLevel="h2"
-        >
-          <EmptyStateBody>
-            {t('Install the Kubernetes NMState operator to list physical NICs on cluster nodes.')}
-          </EmptyStateBody>
-        </EmptyState>
-      );
+    if (nmstateMissing || (nnsError && isMissingCrdError(nnsError))) {
+      return <NmstateSetup missing />;
     }
 
     if (nnsError && isForbiddenError(nnsError)) {
@@ -662,17 +654,7 @@ const NetworkBondPage: FC = () => {
     }
 
     if (nns.length === 0) {
-      return (
-        <EmptyState
-          titleText={t('No NodeNetworkState resources found')}
-          icon={NetworkIcon}
-          headingLevel="h2"
-        >
-          <EmptyStateBody>
-            {t('The NMState operator is installed but has not reported interface state yet.')}
-          </EmptyStateBody>
-        </EmptyState>
-      );
+      return <NmstateSetup missing={false} />;
     }
 
     if (mcps.length === 0) {

@@ -9,7 +9,7 @@ Do not add Community Tools category nav here. Users open this page from the stor
 | | Value |
 | --- | --- |
 | Plugin ID / ConsolePlugin / `package.json` `consolePlugin.name` | **`oct-network-bond`** |
-| Image | `quay.io/cjanisze/oct-network-bond:0.1.2-ocp4.22` (`<semver>-ocp<major.minor>`; optional aliases `:0.1.2` / `:4.22`) |
+| Image | `quay.io/cjanisze/oct-network-bond:0.2.0-ocp4.22` (`<semver>-ocp<major.minor>`; optional aliases `:0.2.0` / `:4.22`) |
 | Git | https://github.com/OOsemka/oct-network-bond |
 | i18n | `plugin__oct-network-bond` |
 
@@ -17,14 +17,16 @@ Old ID `community-network-bond` needs a cluster reinstall. Do not `oc apply` unl
 
 Display name is **Network Bond**. No PVC or discovery sidecar.
 
-**Current version:** `0.1.2` (package.json / consolePlugin.version).
+**Current version:** `0.2.0` (package.json / consolePlugin.version).
+
+**NMState:** the page needs the Kubernetes NMState operator. If the `nodenetworkstates.nmstate.io` CRD is missing, it shows a one-click install (`src/components/NmstateSetup.tsx`, `src/utils/nmstate-install.ts`: Subscription `kubernetes-nmstate-operator`, channel `stable`, `redhat-operators`, then the `NMState` instance), or **Finish NMState setup** when the operator is there but no NodeNetworkState is reported. The console SDK reports no error for a watch on a missing CRD, so detection is by the CRD itself.
 
 ## OpenShift and extension versions
 
 Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`ocp-X.Y`** when PatternFly or APIs diverge. Image tags **always** `<semver>-ocp<major.minor>` (e.g. `0.1.2-ocp4.22`). Storefront Add installs the newest stable semver compatible with the cluster; Update is explicit; one ConsolePlugin name runs one version.
 
 - Git: `main` tracks the newest supported minor (currently **4.22**). Optional `ocp-4.22`, `ocp-4.21`. Tags `v1.0.0`, `v1.1.0`.
-- Images: `oct-network-bond:0.1.2-ocp4.22` and `:0.1.2-ocp4.21`. **Always publish both** OpenShift minor tags (same digest if bits match). Catalog `versions[].image` must be the combined tag. Never catalog `:0.1.2` or `:4.22` as the install image unless that exact combined tag exists and is public.
+- Images: `oct-network-bond:0.2.0-ocp4.22` and `:0.2.0-ocp4.21`. **Always publish both** OpenShift minor tags (same digest if bits match). Catalog `versions[].image` must be the combined tag. Never catalog `:0.2.0` or `:4.22` as the install image unless that exact combined tag exists and is public.
 - PatternFly 6 on 4.22; do not mix PF majors on one branch.
 
 ## What this plugin owns

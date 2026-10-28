@@ -1,6 +1,6 @@
 {
   "name": "oct-network-bond",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Community project. Network Bond Console plugin. Not officially supported by Red Hat.",
   "private": true,
   "license": "Apache-2.0",
@@ -37,7 +37,7 @@
   },
   "consolePlugin": {
     "name": "oct-network-bond",
-    "version": "0.1.2",
+    "version": "0.2.0",
     "displayName": "Network Bond",
     "description": "Community project. Bond physical NICs via NMState. Not officially supported by Red Hat.",
     "exposedModules": {
