@@ -129,22 +129,26 @@ export function brExUplinkChain(nns: NodeNetworkStateKind): Set<string> {
     }
   }
 
+  // Walk down from br-ex (and the default-route interface): its ports, VLAN
+  // bases and bond members. Only the seeds climb to their controller, so a
+  // bridge that merely shares a NIC with br-ex (e.g. another OVS bridge on
+  // bond0) is not treated as part of br-ex.
   const chain = new Set<string>();
-  const queue = [...seeds];
+  const queue: Array<{ name: string; seed: boolean }> = seeds.map((name) => ({ name, seed: true }));
   while (queue.length > 0) {
-    const name = queue.pop() as string;
+    const { name, seed } = queue.pop() as { name: string; seed: boolean };
     if (!name || chain.has(name)) continue;
     chain.add(name);
 
     for (const iface of byName.get(name) || []) {
-      for (const port of bridgePortNames(iface)) queue.push(port);
+      for (const port of bridgePortNames(iface)) queue.push({ name: port, seed: false });
       const base = iface.vlan?.['base-iface'];
-      if (base) queue.push(base);
-      if (iface.controller) queue.push(iface.controller);
+      if (base) queue.push({ name: base, seed: false });
+      if (seed && iface.controller) queue.push({ name: iface.controller, seed: false });
     }
 
     for (const iface of ifaces) {
-      if (iface.controller === name && iface.name) queue.push(iface.name);
+      if (iface.controller === name && iface.name) queue.push({ name: iface.name, seed: false });
     }
   }
 

@@ -387,6 +387,9 @@ export function nodeRoleFromLabels(labels?: Record<string, string>): NodeRole {
 export function isPhysicalEthernet(iface: NmstateInterfaceStatus): boolean {
   const name = iface.name || '';
   if (!name || EXCLUDED_NAME.test(name)) return false;
+  // NetworkManager-unmanaged interfaces (state "ignore"), e.g. the host side of
+  // pod veths, are reported as ethernet; they made pools look mixed.
+  if ((iface.state || '').toLowerCase() === 'ignore') return false;
   const type = (iface.type || '').toLowerCase();
   if (EXCLUDED_TYPES.has(type)) return false;
   if (type && type !== 'ethernet') return false;
