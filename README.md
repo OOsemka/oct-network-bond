@@ -27,7 +27,13 @@ Old plugin ID `community-network-bond` requires a reinstall.
 | 5 | `balance-tlb` | Adaptive transmit LB. UI warns "not recommended". |
 | 6 | `balance-alb` | Adaptive LB. UI warns "not recommended". |
 
-**OVS bonds:** `balance-slb`.
+**OVS bonds:** `balance-slb`. Creates an `ovs-bridge` named `br-<bond name>` (bond name up to 12 characters) whose bond port uses `mode: balance-slb`, with `allow-extra-patch-ports: true` so OVN localnet patch ports survive. Options:
+
+- **Dynamic rebalancing interval** (`ovs-db.other_config.bond-rebalance-interval`, ms, OVS default `10000`). Tick **Disable dynamic rebalancing** to set `"0"`, which keeps each source MAC on its member NIC until a link fails.
+- **IPv4:** L2 only (no IP), DHCP or static, the same as Linux bonds. With an IP, an internal `ovs-interface` named after the bridge carries it.
+- miimon does not apply to OVS bonds and is hidden.
+
+**Remove** on an OVS bond absents its bridge (and internal interface) and brings the NICs back up. It is blocked if the bridge carries `br-ex` or other ports still use it (for example OVN localnet patch ports).
 
 - **Single-NIC bond** is allowed but shows a warning ("single-NIC bond provides no redundancy").
 - **MachineConfigPool targeting:** MCPs fingerprinted by physical NIC names. Only MCPs with identical NIC sets can be combined. One NNCP per disjoint MCP; per-hostname selectors when MCPs overlap.

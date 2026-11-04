@@ -83,6 +83,11 @@ const ExistingBondsCard: FC<ExistingBondsCardProps> = ({ items, busyName, onRemo
                   <Tr key={item.name}>
                     <Td dataLabel={t('Bond')}>
                       <div>{item.name}</div>
+                      {item.kind === 'ovs' && item.bridge && (
+                        <div className="netbond-enslaved">
+                          {t('OVS bond on bridge {{bridge}}', { bridge: item.bridge })}
+                        </div>
+                      )}
                       {protectedBrEx && (
                         <Label isCompact color="red" className="netbond-bond-flag">
                           {t('Protected: carries br-ex')}

@@ -76,6 +76,9 @@ import {
   XMIT_HASH_POLICIES,
   supportsXmitHashPolicy,
   xmitHashPoliciesForMode,
+  isOvsBondMode,
+  ovsBridgeName,
+  OVS_DEFAULT_REBALANCE_INTERVAL_MS,
   buildMcpNicGroups,
   canSelectMcpWith,
   formatSpeed,
@@ -170,6 +173,10 @@ const NetworkBondPage: FC = () => {
   const [bondMode, setBondMode] = useState<BondMode>('802.3ad');
   const [xmitHashPolicy, setXmitHashPolicy] = useState<XmitHashPolicy>('layer2');
   const [miimon, setMiimon] = useState('100');
+  const [rebalanceInterval, setRebalanceInterval] = useState(
+    String(OVS_DEFAULT_REBALANCE_INTERVAL_MS),
+  );
+  const [rebalanceDisabled, setRebalanceDisabled] = useState(false);
   const [ipv4Mode, setIpv4Mode] = useState<Ipv4Mode>('none');
   const [ipAddress, setIpAddress] = useState('');
   const [prefixLength, setPrefixLength] = useState('24');
@@ -273,6 +280,10 @@ const NetworkBondPage: FC = () => {
     [ipv4Mode, ipAddress, prefixLength, gateway],
   );
 
+  const ovsMode = isOvsBondMode(bondMode);
+  /** OVS `bond-rebalance-interval`; "0" disables dynamic rebalancing. */
+  const effectiveRebalanceInterval = rebalanceDisabled ? '0' : rebalanceInterval;
+
   const plan = useMemo(
     () =>
       planMcpNncps({
@@ -286,6 +297,7 @@ const NetworkBondPage: FC = () => {
         miimon,
         ipv4,
         xmitHashPolicy: supportsXmitHashPolicy(bondMode) ? xmitHashPolicy : undefined,
+        rebalanceInterval: effectiveRebalanceInterval,
         ignoreNncpNames: createdNames,
         ignoreBondNames: createdBondName ? [createdBondName] : [],
       }),
@@ -300,6 +312,7 @@ const NetworkBondPage: FC = () => {
       miimon,
       ipv4,
       xmitHashPolicy,
+      effectiveRebalanceInterval,
       createdNames,
       createdBondName,
     ],
@@ -953,7 +966,12 @@ const NetworkBondPage: FC = () => {
                       <FormHelperText>
                         <HelperText>
                           <HelperTextItem>
-                            {t('Linux interface name, up to 15 characters.')}
+                            {ovsMode
+                              ? t(
+                                  'OVS bond port name, up to 12 characters. Creates OVS bridge {{bridge}}.',
+                                  { bridge: ovsBridgeName(bondName || 'bond0') },
+                                )
+                              : t('Linux interface name, up to 15 characters.')}
                           </HelperTextItem>
                         </HelperText>
                       </FormHelperText>
@@ -1054,21 +1072,58 @@ const NetworkBondPage: FC = () => {
                       </FormGroup>
                     )}
 
-                    <FormGroup label={t('miimon')} fieldId="netbond-miimon">
-                      <TextInput
-                        id="netbond-miimon"
-                        value={miimon}
-                        onChange={(_event, value) => setMiimon(value)}
-                        type="number"
-                      />
-                      <FormHelperText>
-                        <HelperText>
-                          <HelperTextItem>
-                            {t('Link monitoring interval in milliseconds.')}
-                          </HelperTextItem>
-                        </HelperText>
-                      </FormHelperText>
-                    </FormGroup>
+                    {ovsMode ? (
+                      <FormGroup
+                        label={t('Dynamic rebalancing interval (ms)')}
+                        fieldId="netbond-rebalance"
+                      >
+                        <TextInput
+                          id="netbond-rebalance"
+                          value={rebalanceDisabled ? '0' : rebalanceInterval}
+                          onChange={(_event, value) => setRebalanceInterval(value)}
+                          type="number"
+                          min={0}
+                          isDisabled={rebalanceDisabled}
+                        />
+                        <Checkbox
+                          id="netbond-rebalance-disabled"
+                          className="netbond-rebalance-disable"
+                          label={t('Disable dynamic rebalancing')}
+                          isChecked={rebalanceDisabled}
+                          onChange={(_event, checked) => setRebalanceDisabled(checked)}
+                        />
+                        <FormHelperText>
+                          <HelperText>
+                            <HelperTextItem>
+                              {rebalanceDisabled
+                                ? t(
+                                    'Sets bond-rebalance-interval to 0: each source MAC stays on its member NIC until a link fails.',
+                                  )
+                                : t(
+                                    'How often OVS moves source-MAC flows between member NICs (bond-rebalance-interval). OVS default is {{ms}} ms; 0 disables rebalancing.',
+                                    { ms: OVS_DEFAULT_REBALANCE_INTERVAL_MS },
+                                  )}
+                            </HelperTextItem>
+                          </HelperText>
+                        </FormHelperText>
+                      </FormGroup>
+                    ) : (
+                      <FormGroup label={t('miimon')} fieldId="netbond-miimon">
+                        <TextInput
+                          id="netbond-miimon"
+                          value={miimon}
+                          onChange={(_event, value) => setMiimon(value)}
+                          type="number"
+                        />
+                        <FormHelperText>
+                          <HelperText>
+                            <HelperTextItem>
+                              {t('Link monitoring interval in milliseconds.')}
+                            </HelperTextItem>
+                          </HelperText>
+                        </FormHelperText>
+                      </FormGroup>
+                    )}
 
                     <FormGroup label={t('IPv4')} fieldId="netbond-ipv4" role="radiogroup">
                       <Radio
@@ -1200,6 +1255,24 @@ const NetworkBondPage: FC = () => {
                             {BOND_MODES.find((m) => m.value === bondMode)?.label || bondMode}
                           </DescriptionListDescription>
                         </DescriptionListGroup>
+                        {ovsMode && (
+                          <>
+                            <DescriptionListGroup>
+                              <DescriptionListTerm>{t('OVS bridge')}</DescriptionListTerm>
+                              <DescriptionListDescription>
+                                {bondName.trim() ? ovsBridgeName(bondName) : '—'}
+                              </DescriptionListDescription>
+                            </DescriptionListGroup>
+                            <DescriptionListGroup>
+                              <DescriptionListTerm>{t('Dynamic rebalancing')}</DescriptionListTerm>
+                              <DescriptionListDescription>
+                                {effectiveRebalanceInterval.trim() === '0'
+                                  ? t('Disabled')
+                                  : t('Every {{ms}} ms', { ms: effectiveRebalanceInterval })}
+                              </DescriptionListDescription>
+                            </DescriptionListGroup>
+                          </>
+                        )}
                         <DescriptionListGroup>
                           <DescriptionListTerm>{t('IPv4')}</DescriptionListTerm>
                           <DescriptionListDescription>

@@ -45,10 +45,11 @@ Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`oc
 | Linux | `802.3ad` (4) | LACP | Requires switch support; exposes xmit hash policy |
 | Linux | `balance-tlb` (5) | Adaptive transmit load balancing | Not recommended |
 | Linux | `balance-alb` (6) | Adaptive load balancing | Not recommended |
-| OVS | `balance-slb` | OVS source-load balancing | — |
+| OVS | `balance-slb` | OVS source-load balancing on bridge `br-<bond>` | Exposes dynamic rebalancing interval (0 = disabled) |
 
 - **Not-recommended warnings** are shown in the UI for `balance-xor`, `balance-tlb`, and `balance-alb`. The mode dropdown appends ⚠ to those labels and shows PatternFly warning HelperText.
 - **Xmit hash policy** (`802.3ad` and `balance-xor`): `layer2`, `layer2+3`, `layer3+4`; `balance-xor` additionally offers `vlan+srcmac`. Allowed policies per mode come from `XMIT_HASH_POLICIES[].modes` (`xmitHashPoliciesForMode`); the FormSelect appears only for modes that have policies, and switching mode resets an unsupported policy to `layer2`.
+- **OVS `balance-slb`:** `buildBondDesiredState` emits an `ovs-bridge` `br-<bondName>` (`ovsBridgeName`; bond name capped at 12 so the bridge fits in 15) with `allow-extra-patch-ports: true` and a bond port carrying `link-aggregation.ovs-db.other_config.bond-rebalance-interval` (default `10000`, `"0"` when **Disable dynamic rebalancing** is ticked). IPv4 None/DHCP/static as for Linux bonds; with an IP an internal `ovs-interface` named after the bridge carries it (and the default route). miimon is hidden for OVS. OVS bonds are bridge ports, not top-level interfaces: `bond-remove.ts` uses `BondRef` (`bondRefsInInterfaces`) for both kinds. Removing an OVS bond absents the bridge (plus its internal `ovs-interface`) and restores the NICs. br-ex protection covers the bond **and** its bridge, and other bridge ports (e.g. OVN patch ports) are dependents that block Remove. An absent payload has no bridge ports, so for tool-managed NNCPs an absent `br-<name>` ovs-bridge maps back to bond `<name>`.
 - **Single-NIC bond** is allowed but shows a warning ("single-NIC bond provides no redundancy").
 
 ## MachineConfigPool targeting
