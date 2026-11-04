@@ -279,6 +279,7 @@
   "Install NMState operator": "Install NMState operator",
   "Interface": "Interface",
   "LACP Transmit Hash Policy": "LACP Transmit Hash Policy",
+  "Transmit Hash Policy": "Transmit Hash Policy",
   "NMState has not reported node interfaces yet": "NMState has not reported node interfaces yet",
   "NMState is installed.": "NMState is installed.",
   "Policy": "Policy",

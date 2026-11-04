@@ -41,14 +41,14 @@ Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`oc
 | Type | Mode | Description | Warnings |
 | --- | --- | --- | --- |
 | Linux | `active-backup` (1) | Active-backup | Safe default |
-| Linux | `balance-xor` (2) | XOR | Not recommended |
+| Linux | `balance-xor` (2) | XOR | Not recommended; requires a static LAG on the switch (port-channel without LACP); exposes xmit hash policy (incl. `vlan+srcmac`) |
 | Linux | `802.3ad` (4) | LACP | Requires switch support; exposes xmit hash policy |
 | Linux | `balance-tlb` (5) | Adaptive transmit load balancing | Not recommended |
 | Linux | `balance-alb` (6) | Adaptive load balancing | Not recommended |
 | OVS | `balance-slb` | OVS source-load balancing | — |
 
 - **Not-recommended warnings** are shown in the UI for `balance-xor`, `balance-tlb`, and `balance-alb`. The mode dropdown appends ⚠ to those labels and shows PatternFly warning HelperText.
-- **LACP xmit hash policy** (802.3ad only): `layer2`, `layer2+3`, `layer3+4`. Hash policy FormSelect appears only when `bondMode === '802.3ad'`.
+- **Xmit hash policy** (`802.3ad` and `balance-xor`): `layer2`, `layer2+3`, `layer3+4`; `balance-xor` additionally offers `vlan+srcmac`. Allowed policies per mode come from `XMIT_HASH_POLICIES[].modes` (`xmitHashPoliciesForMode`); the FormSelect appears only for modes that have policies, and switching mode resets an unsupported policy to `layer2`.
 - **Single-NIC bond** is allowed but shows a warning ("single-NIC bond provides no redundancy").
 
 ## MachineConfigPool targeting
