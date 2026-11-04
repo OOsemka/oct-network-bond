@@ -300,5 +300,7 @@
   "OVS bridge": "OVS bridge",
   "Dynamic rebalancing": "Dynamic rebalancing",
   "Every {{ms}} ms": "Every {{ms}} ms",
-  "OVS bond on bridge {{bridge}}": "OVS bond on bridge {{bridge}}"
+  "OVS bond on bridge {{bridge}}": "OVS bond on bridge {{bridge}}",
+  "Select at least one NIC": "Select at least one NIC",
+  "Bonds typically require 2 or more NICs for redundancy and load balancing. A single-NIC bond provides no failover capability.": "Bonds typically require 2 or more NICs for redundancy and load balancing. A single-NIC bond provides no failover capability."
 }

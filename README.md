@@ -49,9 +49,9 @@ yarn build
 
 Deploy: edit the image in `deploy/install.yaml`, `oc apply -f deploy/install.yaml` (only when asked), then enable `oct-network-bond` in `consoles.operator.openshift.io/cluster` `spec.plugins` (or use the storefront **Add** action).
 
-## Contributing — cluster-portable code
+## Contributing
 
-Do **not** hardcode environment-specific values (VLAN IDs, CIDRs, lab bond names, StorageClasses, hostnames). The UI reads live NMState; the user supplies the bond. Agents: `.cursor/rules/oct-no-env-hardcoding.mdc`.
+See [CONTRIBUTING.md](CONTRIBUTING.md): setup, `yarn verify`, testing on your own cluster and the project rules. Do **not** hardcode environment-specific values (VLAN IDs, CIDRs, lab bond names, StorageClasses, hostnames); the UI reads live NMState and the user supplies the bond. Agents: `.cursor/rules/oct-no-env-hardcoding.mdc`.
 
 ## NMState
 
