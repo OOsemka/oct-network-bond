@@ -287,5 +287,7 @@
   "Speed": "Speed",
   "The NMState operator is not installed": "The NMState operator is not installed",
   "The operator is installed, but nodes are not reporting their interfaces. Finishing the setup creates the NMState instance if it is missing.": "The operator is installed, but nodes are not reporting their interfaces. Finishing the setup creates the NMState instance if it is missing.",
-  "This page reads and configures node interfaces with the Kubernetes NMState operator. Install it from redhat-operators with one click.": "This page reads and configures node interfaces with the Kubernetes NMState operator. Install it from redhat-operators with one click."
+  "This page reads and configures node interfaces with the Kubernetes NMState operator. Install it from redhat-operators with one click.": "This page reads and configures node interfaces with the Kubernetes NMState operator. Install it from redhat-operators with one click.",
+  "Select at least one NIC": "Select at least one NIC",
+  "Bonds typically require 2 or more NICs for redundancy and load balancing. A single-NIC bond provides no failover capability.": "Bonds typically require 2 or more NICs for redundancy and load balancing. A single-NIC bond provides no failover capability."
 }
