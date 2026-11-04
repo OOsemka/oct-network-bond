@@ -4,6 +4,8 @@
     "moduleResolution": "node",
     "jsx": "react",
     "allowJs": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
     "strict": true,
     "noUnusedLocals": true,
     "types": ["node"]
