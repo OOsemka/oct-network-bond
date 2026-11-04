@@ -13,6 +13,10 @@
  * that uplink absent bricks the node. Lab NNS (az1): `br-ex` is an ovs-bridge
  * whose ports include VLAN `bond0.2102`; that VLAN's `base-iface` is `bond0`;
  * the default route next-hop-interface is `br-ex`.
+ *
+ * OVS bonds (balance-slb) are not top-level interfaces: they are ports with
+ * `link-aggregation` on an ovs-bridge. Removing one absents the owning bridge
+ * (and its internal ovs-interface, if any) and brings the member NICs back up.
  */
 
 import {
@@ -25,7 +29,10 @@ import {
   NodeNetworkStateKind,
   NmstateInterfaceStatus,
   PlanMessage,
+  OVS_BRIDGE_PREFIX,
+  lagPortNames,
   nodeMatchesNncpSelector,
+  ovsBondsInInterfaces,
   planNncpTargets,
   sanitizeK8sName,
   uniqueNodeNames,
@@ -44,8 +51,24 @@ export const NNCP_APPLY_POLL_MS = 2_000;
 
 const BR_EX = 'br-ex';
 
+export type BondKind = 'linux' | 'ovs';
+
+/** A bond found in NodeNetworkState or an NNCP desired state. */
+export type BondRef = {
+  name: string;
+  kind: BondKind;
+  /** OVS only: the ovs-bridge that owns the bond port. */
+  bridge?: string;
+  ports: string[];
+  /** Bond state (Linux) or owning bridge state (OVS), lower-case. */
+  state: string;
+};
+
 export type BondInventoryItem = {
   name: string;
+  kind: BondKind;
+  /** OVS only: owning bridge. */
+  bridge?: string;
   ports: string[];
   /** Nodes whose NNS currently lists this bond. */
   nodeNames: string[];
@@ -79,8 +102,62 @@ function ifaceType(iface: { type?: string }): string {
   return (iface.type || '').toLowerCase();
 }
 
-function isBondIface(iface: { type?: string; 'link-aggregation'?: unknown }): boolean {
-  return ifaceType(iface) === 'bond' || Boolean(iface['link-aggregation']);
+function isLinuxBondIface(iface: { type?: string; 'link-aggregation'?: unknown }): boolean {
+  const type = ifaceType(iface);
+  if (type === 'ovs-bridge') return false;
+  return type === 'bond' || Boolean(iface['link-aggregation']);
+}
+
+/**
+ * Linux and OVS bonds in a list of interfaces. `managed` (an NNCP created by this
+ * tool) also maps an absent `br-<name>` ovs-bridge back to OVS bond `<name>`,
+ * because the absent payload carries no bridge ports.
+ */
+export function bondRefsInInterfaces(
+  ifaces: Array<NmstateInterfaceStatus | NncpDesiredInterface>,
+  opts: { managed?: boolean } = {},
+): BondRef[] {
+  const refs: BondRef[] = [];
+  for (const iface of ifaces) {
+    if (!iface.name || !isLinuxBondIface(iface)) continue;
+    refs.push({
+      name: iface.name,
+      kind: 'linux',
+      ports: lagPortNames(iface['link-aggregation']?.port),
+      state: (iface.state || '').toLowerCase(),
+    });
+  }
+  const ovs = ovsBondsInInterfaces(ifaces);
+  for (const b of ovs) {
+    refs.push({ name: b.name, kind: 'ovs', bridge: b.bridge, ports: b.ports, state: b.state });
+  }
+  if (opts.managed) {
+    const bridgesWithBond = new Set(ovs.map((b) => b.bridge));
+    for (const iface of ifaces) {
+      const name = iface.name || '';
+      if (
+        ifaceType(iface) === 'ovs-bridge' &&
+        (iface.state || '').toLowerCase() === 'absent' &&
+        name.startsWith(OVS_BRIDGE_PREFIX) &&
+        name.length > OVS_BRIDGE_PREFIX.length &&
+        name !== BR_EX &&
+        !bridgesWithBond.has(name)
+      ) {
+        refs.push({
+          name: name.slice(OVS_BRIDGE_PREFIX.length),
+          kind: 'ovs',
+          bridge: name,
+          ports: [],
+          state: 'absent',
+        });
+      }
+    }
+  }
+  return refs;
+}
+
+function nnsBondRef(nns: NodeNetworkStateKind, bondName: string): BondRef | undefined {
+  return bondRefsInInterfaces(nnsInterfaces(nns)).find((b) => b.name === bondName);
 }
 
 function bridgePortNames(iface: NmstateInterfaceStatus): string[] {
@@ -155,17 +232,23 @@ export function brExUplinkChain(nns: NodeNetworkStateKind): Set<string> {
   return chain;
 }
 
+/** Nodes where the bond (or, for OVS, its bridge) is on the br-ex uplink chain. */
 export function brExCarrierBondNodes(
   nnsList: NodeNetworkStateKind[],
   bondName: string,
   nodeNames: string[],
+  bridge?: string,
 ): string[] {
   const want = new Set(nodeNames);
   const hits: string[] = [];
   for (const nns of nnsList) {
     const node = nns.metadata.name;
     if (!want.has(node)) continue;
-    if (brExUplinkChain(nns).has(bondName)) hits.push(node);
+    const chain = brExUplinkChain(nns);
+    const nodeBridge = bridge || nnsBondRef(nns, bondName)?.bridge;
+    if (chain.has(bondName) || (nodeBridge && (nodeBridge === BR_EX || chain.has(nodeBridge)))) {
+      hits.push(node);
+    }
   }
   return hits.sort();
 }
@@ -176,22 +259,26 @@ export function isManagedByBondTool(nncp: NncpKind): boolean {
   return labels['app.kubernetes.io/name'] === BOND_TOOL_NAME_LABEL;
 }
 
-export function nncpBondInterfaces(nncp: NncpKind): NncpDesiredInterface[] {
-  return (nncp.spec?.desiredState?.interfaces || []).filter((iface) => isBondIface(iface));
+export function nncpBondRefs(nncp: NncpKind): BondRef[] {
+  return bondRefsInInterfaces(nncp.spec?.desiredState?.interfaces || [], {
+    managed: isManagedByBondTool(nncp),
+  });
+}
+
+function nncpBondRef(nncp: NncpKind, bondName: string): BondRef | undefined {
+  return nncpBondRefs(nncp).find((b) => b.name === bondName);
 }
 
 function nncpDefinesBond(nncp: NncpKind, bondName: string): boolean {
-  return nncpBondInterfaces(nncp).some((iface) => iface.name === bondName);
+  return Boolean(nncpBondRef(nncp, bondName));
 }
 
 function nncpBondState(nncp: NncpKind, bondName: string): string {
-  const iface = nncpBondInterfaces(nncp).find((i) => i.name === bondName);
-  return (iface?.state || '').toLowerCase();
+  return nncpBondRef(nncp, bondName)?.state || '';
 }
 
 function nncpBondPorts(nncp: NncpKind, bondName: string): string[] {
-  const iface = nncpBondInterfaces(nncp).find((i) => i.name === bondName);
-  return iface?.['link-aggregation']?.port || [];
+  return nncpBondRef(nncp, bondName)?.ports || [];
 }
 
 export function nncpAppliesToAnyNode(
@@ -215,21 +302,42 @@ export function nodesMatchingNncp(nncp: NncpKind, nodes: NodeKindLite[]): string
 }
 
 function nnsBondPorts(nns: NodeNetworkStateKind, bondName: string): string[] {
-  for (const iface of nnsInterfaces(nns)) {
-    if (iface.name === bondName && isBondIface(iface)) {
-      return iface['link-aggregation']?.port || [];
-    }
-  }
-  return [];
+  return nnsBondRef(nns, bondName)?.ports || [];
 }
 
 /**
  * VLANs, bridges, and other non-ethernet controllers that still use this bond.
  * Ethernet slaves are restored as standalone NICs, so they are not dependents.
+ *
+ * For an OVS bond the unit being removed is its bridge: anything else on the
+ * bridge (other ports, OVN localnet patch ports) or built on its internal
+ * interface is a dependent. The bridge's own internal ovs-interface is not.
  */
 export function bondDependentsOnNode(nns: NodeNetworkStateKind, bondName: string): string[] {
   const names = new Set<string>();
-  for (const iface of nnsInterfaces(nns)) {
+  const ifaces = nnsInterfaces(nns);
+  const ref = nnsBondRef(nns, bondName);
+
+  if (ref?.kind === 'ovs' && ref.bridge) {
+    const bridge = ref.bridge;
+    const own = new Set([bondName, bridge]);
+    for (const iface of ifaces) {
+      if (!iface.name) continue;
+      if (iface.name === bridge && ifaceType(iface) === 'ovs-bridge') {
+        bridgePortNames(iface)
+          .filter((p) => !own.has(p) && !ref.ports.includes(p))
+          .forEach((p) => names.add(p));
+        continue;
+      }
+      if (own.has(iface.name) || ifaceType(iface) === 'ethernet') continue;
+      if (iface.vlan?.['base-iface'] === bridge) names.add(iface.name);
+      if (bridgePortNames(iface).includes(bridge)) names.add(iface.name);
+      if (iface.controller === bridge) names.add(iface.name);
+    }
+    return Array.from(names).sort();
+  }
+
+  for (const iface of ifaces) {
     if (!iface.name || iface.name === bondName) continue;
     const type = ifaceType(iface);
     if (type === 'ethernet') continue;
@@ -240,12 +348,18 @@ export function bondDependentsOnNode(nns: NodeNetworkStateKind, bondName: string
   return Array.from(names).sort();
 }
 
-function extraAbsentFromNncp(nncp: NncpKind, bondName: string): Array<{ name: string; type: string }> {
+function extraAbsentFromNncp(
+  nncp: NncpKind,
+  bondName: string,
+  bridge?: string,
+): Array<{ name: string; type: string }> {
   const extra: Array<{ name: string; type: string }> = [];
+  const own = new Set([bondName, bridge].filter(Boolean));
   for (const iface of nncp.spec?.desiredState?.interfaces || []) {
-    if (!iface.name || iface.name === bondName) continue;
+    if (!iface.name || own.has(iface.name)) continue;
     if (ifaceType(iface) === 'ethernet') continue;
-    if (iface.vlan?.['base-iface'] === bondName || ifaceType(iface) === 'vlan') {
+    const base = iface.vlan?.['base-iface'];
+    if (base === bondName || (bridge && base === bridge) || ifaceType(iface) === 'vlan') {
       extra.push({ name: iface.name, type: iface.type || 'vlan' });
     }
   }
@@ -256,6 +370,11 @@ export function buildAbsentBondDesiredState(opts: {
   bondName: string;
   ports: string[];
   extraAbsent?: Array<{ name: string; type: string }>;
+  kind?: BondKind;
+  /** OVS only: bridge to absent. */
+  bridge?: string;
+  /** OVS only: also absent the bridge's internal ovs-interface. */
+  bridgeHasInternalIface?: boolean;
 }): Record<string, unknown> {
   const ports = Array.from(new Set(opts.ports.filter(Boolean)));
   const extra = opts.extraAbsent || [];
@@ -268,11 +387,19 @@ export function buildAbsentBondDesiredState(opts: {
     interfaces.push({ name: item.name, type: item.type || 'vlan', state: 'absent' });
   }
 
-  interfaces.push({
-    name: opts.bondName,
-    type: 'bond',
-    state: 'absent',
-  });
+  if (opts.kind === 'ovs' && opts.bridge) {
+    if (opts.bridgeHasInternalIface) {
+      interfaces.push({ name: opts.bridge, type: 'ovs-interface', state: 'absent' });
+    }
+    interfaces.push({ name: opts.bridge, type: 'ovs-bridge', state: 'absent' });
+    seen.add(opts.bridge);
+  } else {
+    interfaces.push({
+      name: opts.bondName,
+      type: 'bond',
+      state: 'absent',
+    });
+  }
   seen.add(opts.bondName);
 
   for (const port of ports) {
@@ -377,6 +504,8 @@ export function listBondInventory(opts: {
   const byName = new Map<
     string,
     {
+      kind: BondKind;
+      bridge?: string;
       ports: Set<string>;
       nodeNames: Set<string>;
       nncpNames: Set<string>;
@@ -386,10 +515,13 @@ export function listBondInventory(opts: {
     }
   >();
 
-  const ensure = (name: string) => {
+  const ensure = (ref: BondRef) => {
+    const name = ref.name;
     let row = byName.get(name);
     if (!row) {
       row = {
+        kind: ref.kind,
+        bridge: ref.bridge,
         ports: new Set(),
         nodeNames: new Set(),
         nncpNames: new Set(),
@@ -399,16 +531,19 @@ export function listBondInventory(opts: {
       };
       byName.set(name, row);
     }
+    if (ref.kind === 'ovs') {
+      row.kind = 'ovs';
+      row.bridge = row.bridge || ref.bridge;
+    }
     return row;
   };
 
   for (const nns of opts.nnsList) {
     if (!scope.has(nns.metadata.name)) continue;
-    for (const iface of nnsInterfaces(nns)) {
-      if (!iface.name || !isBondIface(iface)) continue;
-      const row = ensure(iface.name);
+    for (const ref of bondRefsInInterfaces(nnsInterfaces(nns))) {
+      const row = ensure(ref);
       row.nodeNames.add(nns.metadata.name);
-      (iface['link-aggregation']?.port || []).forEach((p) => row.ports.add(p));
+      ref.ports.forEach((p) => row.ports.add(p));
     }
   }
 
@@ -416,14 +551,13 @@ export function listBondInventory(opts: {
     if (!nncpAppliesToAnyNode(nncp, scopedNodes.length ? scopedNodes : opts.nodes, opts.scopeNodeNames)) {
       continue;
     }
-    for (const iface of nncpBondInterfaces(nncp)) {
-      if (!iface.name) continue;
-      const row = ensure(iface.name);
+    for (const ref of nncpBondRefs(nncp)) {
+      const row = ensure(ref);
       row.nncpNames.add(nncp.metadata.name);
       row.bondNncps += 1;
-      if ((iface.state || '').toLowerCase() === 'absent') row.absentNncps += 1;
+      if (ref.state === 'absent') row.absentNncps += 1;
       if (isManagedByBondTool(nncp)) row.managedByTool = true;
-      (iface['link-aggregation']?.port || []).forEach((p) => row.ports.add(p));
+      ref.ports.forEach((p) => row.ports.add(p));
     }
   }
 
@@ -443,7 +577,12 @@ export function listBondInventory(opts: {
         });
       }
 
-      const brExNodeNames = brExCarrierBondNodes(opts.nnsList, name, Array.from(applyNodes));
+      const brExNodeNames = brExCarrierBondNodes(
+        opts.nnsList,
+        name,
+        Array.from(applyNodes),
+        row.bridge,
+      );
       const dependent = new Set<string>();
       for (const nns of opts.nnsList) {
         if (!applyNodes.has(nns.metadata.name) && !row.nodeNames.has(nns.metadata.name)) continue;
@@ -451,7 +590,7 @@ export function listBondInventory(opts: {
       }
       const ourExtra = new Set<string>();
       matching.filter(isManagedByBondTool).forEach((nncp) => {
-        extraAbsentFromNncp(nncp, name).forEach((e) => ourExtra.add(e.name));
+        extraAbsentFromNncp(nncp, name, row.bridge).forEach((e) => ourExtra.add(e.name));
       });
       const unmanagedDependents = Array.from(dependent)
         .filter((d) => !ourExtra.has(d))
@@ -474,6 +613,8 @@ export function listBondInventory(opts: {
 
       items.push({
         name,
+        kind: row.kind,
+        bridge: row.bridge,
         ports: Array.from(row.ports).sort(),
         nodeNames: Array.from(row.nodeNames).sort(),
         nncpNames,
@@ -557,7 +698,19 @@ export function planBondRemoval(opts: {
   }
 
   const targetNodeNames = Array.from(applyNodes).sort();
-  const brExNodes = brExCarrierBondNodes(opts.nnsList, bondName, targetNodeNames);
+
+  // Linux or OVS? Prefer live state on the apply-set, then any matching policy.
+  const nnsRefs = opts.nnsList
+    .filter((nns) => applyNodes.has(nns.metadata.name))
+    .map((nns) => nnsBondRef(nns, bondName))
+    .filter((r): r is BondRef => Boolean(r));
+  const ref: BondRef | undefined =
+    nnsRefs[0] ||
+    matchingNncps.map((n) => nncpBondRef(n, bondName)).find((r): r is BondRef => Boolean(r));
+  const kind: BondKind = ref?.kind || 'linux';
+  const bridge = kind === 'ovs' ? ref?.bridge : undefined;
+
+  const brExNodes = brExCarrierBondNodes(opts.nnsList, bondName, targetNodeNames, bridge);
   if (brExNodes.length > 0) {
     issues.push({
       key: 'Cannot remove {{name}}: it carries br-ex (cluster default network) on {{nodes}}.',
@@ -574,7 +727,7 @@ export function planBondRemoval(opts: {
   const extraAbsent: Array<{ name: string; type: string }> = [];
   const extraNames = new Set<string>();
   matchingNncps.filter(isManagedByBondTool).forEach((nncp) => {
-    extraAbsentFromNncp(nncp, bondName).forEach((e) => {
+    extraAbsentFromNncp(nncp, bondName, bridge).forEach((e) => {
       if (!extraNames.has(e.name)) {
         extraNames.add(e.name);
         extraAbsent.push(e);
@@ -582,11 +735,7 @@ export function planBondRemoval(opts: {
     });
   });
   const unmanaged = Array.from(dependent).filter((d) => !extraNames.has(d));
-  const stillInNns = opts.nnsList.some(
-    (nns) =>
-      applyNodes.has(nns.metadata.name) &&
-      nnsInterfaces(nns).some((iface) => iface.name === bondName && isBondIface(iface)),
-  );
+  const stillInNns = nnsRefs.length > 0;
 
   if (unmanaged.length > 0 && stillInNns) {
     issues.push({
@@ -613,7 +762,28 @@ export function planBondRemoval(opts: {
   }
 
   const ports = portsForBond(bondName, opts.nnsList, matchingNncps, targetNodeNames);
-  const desiredState = buildAbsentBondDesiredState({ bondName, ports, extraAbsent });
+  const bridgeHasInternalIface =
+    Boolean(bridge) &&
+    (opts.nnsList.some(
+      (nns) =>
+        applyNodes.has(nns.metadata.name) &&
+        nnsInterfaces(nns).some(
+          (iface) => iface.name === bridge && ifaceType(iface) === 'ovs-interface',
+        ),
+    ) ||
+      matchingNncps.some((nncp) =>
+        (nncp.spec?.desiredState?.interfaces || []).some(
+          (iface) => iface.name === bridge && ifaceType(iface) === 'ovs-interface',
+        ),
+      ));
+  const desiredState = buildAbsentBondDesiredState({
+    bondName,
+    ports,
+    extraAbsent,
+    kind,
+    bridge,
+    bridgeHasInternalIface,
+  });
   const alreadyAbsent =
     !stillInNns && matchingNncps.length > 0 && stillPresentPolicies.length === 0;
 

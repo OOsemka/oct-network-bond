@@ -103,8 +103,16 @@ export type NmstateVlan = {
   id?: number;
 };
 
+/** Bond member list: Linux bonds use strings, OVS bonds use `{ name }` objects. */
+export type NmstateLagPorts = Array<string | { name?: string }>;
+
 export type NmstateBridgePort = {
   name?: string;
+  /** Present when this OVS bridge port is a bond. */
+  'link-aggregation'?: {
+    mode?: string;
+    port?: NmstateLagPorts;
+  };
 };
 
 export type NmstateRoute = {
@@ -132,7 +140,7 @@ export type NmstateInterfaceStatus = {
   };
   'link-aggregation'?: {
     mode?: string;
-    port?: string[];
+    port?: NmstateLagPorts;
     options?: Record<string, unknown>;
   };
   ipv4?: {
@@ -187,9 +195,12 @@ export type NncpDesiredInterface = {
   type?: string;
   state?: string;
   'link-aggregation'?: {
-    port?: string[];
+    port?: NmstateLagPorts;
   };
   vlan?: NmstateVlan;
+  bridge?: {
+    port?: Array<NmstateBridgePort | string>;
+  };
 };
 
 /** Watched NNCP (looser than the policy we create). */
@@ -353,6 +364,54 @@ export const BOND_MODES: BondModeInfo[] = [
   },
 ];
 
+export function isOvsBondMode(mode: BondMode): boolean {
+  return BOND_MODES.find((m) => m.value === mode)?.category === 'ovs';
+}
+
+/** OVS default for `other_config:bond-rebalance-interval` (ms). */
+export const OVS_DEFAULT_REBALANCE_INTERVAL_MS = 10000;
+
+/** Bridge prefix for OVS bonds; the bridge is named `br-<bondName>`. */
+export const OVS_BRIDGE_PREFIX = 'br-';
+
+export function ovsBridgeName(bondName: string): string {
+  return `${OVS_BRIDGE_PREFIX}${bondName.trim()}`;
+}
+
+export function lagPortNames(ports: NmstateLagPorts | undefined): string[] {
+  return (ports || [])
+    .map((p) => (typeof p === 'string' ? p : p?.name || ''))
+    .filter(Boolean);
+}
+
+/** An OVS bond: a port with link-aggregation on an ovs-bridge. */
+export type OvsBondRef = {
+  name: string;
+  bridge: string;
+  ports: string[];
+  /** State of the owning ovs-bridge. */
+  state: string;
+};
+
+export function ovsBondsInInterfaces(
+  ifaces: Array<NmstateInterfaceStatus | NncpDesiredInterface>,
+): OvsBondRef[] {
+  const out: OvsBondRef[] = [];
+  for (const iface of ifaces) {
+    if ((iface.type || '').toLowerCase() !== 'ovs-bridge' || !iface.name) continue;
+    for (const port of iface.bridge?.port || []) {
+      if (!port || typeof port === 'string' || !port.name || !port['link-aggregation']) continue;
+      out.push({
+        name: port.name,
+        bridge: iface.name,
+        ports: lagPortNames(port['link-aggregation'].port),
+        state: (iface.state || '').toLowerCase(),
+      });
+    }
+  }
+  return out;
+}
+
 export function formatSpeed(mbps?: number): string {
   if (mbps === undefined || mbps <= 0) return '—';
   if (mbps >= 1000) return `${mbps / 1000} Gbps`;
@@ -456,10 +515,17 @@ export function physicalNicsFromNns(
   return nics;
 }
 
-export function validateBondName(name: string): PlanMessage | undefined {
+export function validateBondName(name: string, mode?: BondMode): PlanMessage | undefined {
   const trimmed = name.trim();
   if (!trimmed) return { key: 'Bond name is required' };
   if (trimmed.length > 15) return { key: 'Bond name must be 15 characters or fewer' };
+  const maxOvs = 15 - OVS_BRIDGE_PREFIX.length;
+  if (mode && isOvsBondMode(mode) && trimmed.length > maxOvs) {
+    return {
+      key: 'OVS bond name must be {{max}} characters or fewer so bridge {{bridge}} fits in 15',
+      values: { max: String(maxOvs), bridge: ovsBridgeName(trimmed) },
+    };
+  }
   if (!LINUX_IFACE_NAME.test(trimmed)) {
     return {
       key: 'Bond name must start with a letter and use only letters, digits, underscore, or hyphen',
@@ -480,6 +546,14 @@ export function validateIpv4(ipv4: BondIpv4Config): PlanMessage | undefined {
   }
   if (ipv4.gateway && !IPV4.test(ipv4.gateway.trim())) {
     return { key: 'Enter a valid gateway IPv4 address, or leave it empty' };
+  }
+  return undefined;
+}
+
+export function validateRebalanceInterval(interval: string): PlanMessage | undefined {
+  const trimmed = interval.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return { key: 'Rebalance interval must be a non-negative integer (0 disables rebalancing)' };
   }
   return undefined;
 }
@@ -679,17 +753,38 @@ export function existingBondNamesOnNodes(
   for (const nns of nnsList) {
     const nodeName = nns.metadata.name;
     if (!want.has(nodeName)) continue;
-    const names = (nns.status?.currentState?.interfaces || [])
+    const ifaces = nns.status?.currentState?.interfaces || [];
+    const names = ifaces
       .filter((iface) => (iface.type || '').toLowerCase() === 'bond' && iface.name)
       .map((iface) => iface.name as string);
-    if (names.length) out.set(nodeName, names);
+    ovsBondsInInterfaces(ifaces).forEach((b) => names.push(b.name));
+    if (names.length) out.set(nodeName, Array.from(new Set(names)));
   }
   return out;
 }
 
 function nncpInterfaceNames(nncp: NncpKind): string[] {
   const ifaces = nncp.spec?.desiredState?.interfaces || [];
-  return ifaces.map((i) => i.name).filter((n): n is string => Boolean(n));
+  const names = ifaces.map((i) => i.name).filter((n): n is string => Boolean(n));
+  ovsBondsInInterfaces(ifaces).forEach((b) => names.push(b.name));
+  return Array.from(new Set(names));
+}
+
+/** Nodes (within nodeNames) whose NodeNetworkState has any interface called `name`. */
+function nodesWithInterfaceName(
+  nnsList: NodeNetworkStateKind[],
+  nodeNames: string[],
+  name: string,
+): string[] {
+  const want = new Set(nodeNames);
+  return nnsList
+    .filter(
+      (nns) =>
+        want.has(nns.metadata.name) &&
+        (nns.status?.currentState?.interfaces || []).some((iface) => iface.name === name),
+    )
+    .map((nns) => nns.metadata.name)
+    .sort();
 }
 
 export function nncpsDefiningNameForNodes(
@@ -834,34 +929,87 @@ export function buildBondDesiredState(opts: {
   ports: string[];
   ipv4: BondIpv4Config;
   xmitHashPolicy?: XmitHashPolicy;
+  /** OVS only: `bond-rebalance-interval` in ms; "0" disables rebalancing. */
+  rebalanceInterval?: string;
 }): Record<string, unknown> {
   const uniquePorts = Array.from(new Set(opts.ports));
-  const linkAggOptions: Record<string, string> = { miimon: String(opts.miimon) };
-  if (
-    opts.xmitHashPolicy &&
-    xmitHashPoliciesForMode(opts.bondMode).some((p) => p.value === opts.xmitHashPolicy)
-  ) {
-    linkAggOptions.xmit_hash_policy = opts.xmitHashPolicy;
-  }
-  const interfaces: Record<string, unknown>[] = [
-    {
-      name: opts.bondName,
-      type: 'bond',
-      state: 'up',
-      ipv4: ipv4Spec(opts.ipv4),
-      ipv6: { enabled: false },
-      'link-aggregation': {
-        mode: opts.bondMode,
-        options: linkAggOptions,
-        port: uniquePorts,
+  const ethernetPorts = uniquePorts.map((port) => ({
+    name: port,
+    type: 'ethernet',
+    state: 'up',
+  }));
+
+  let interfaces: Record<string, unknown>[];
+  /** Interface that carries the IP (and default route). */
+  let ipInterface = opts.bondName;
+
+  if (isOvsBondMode(opts.bondMode)) {
+    // OVS bond: a port with link-aggregation on bridge br-<bond>. With an IP,
+    // an internal ovs-interface named after the bridge carries it (like br-ex).
+    const bridge = ovsBridgeName(opts.bondName);
+    const withIp = opts.ipv4.mode !== 'none';
+    const interval = (opts.rebalanceInterval ?? '').trim() || String(OVS_DEFAULT_REBALANCE_INTERVAL_MS);
+    const bridgePorts: Record<string, unknown>[] = [
+      {
+        name: opts.bondName,
+        'link-aggregation': {
+          mode: opts.bondMode,
+          port: uniquePorts.map((name) => ({ name })),
+          'ovs-db': {
+            other_config: { 'bond-rebalance-interval': interval },
+          },
+        },
       },
-    },
-    ...uniquePorts.map((port) => ({
-      name: port,
-      type: 'ethernet',
-      state: 'up',
-    })),
-  ];
+    ];
+    if (withIp) bridgePorts.push({ name: bridge });
+    interfaces = [
+      {
+        name: bridge,
+        type: 'ovs-bridge',
+        state: 'up',
+        ipv4: { enabled: false },
+        ipv6: { enabled: false },
+        bridge: {
+          'allow-extra-patch-ports': true,
+          port: bridgePorts,
+        },
+      },
+    ];
+    if (withIp) {
+      interfaces.push({
+        name: bridge,
+        type: 'ovs-interface',
+        state: 'up',
+        ipv4: ipv4Spec(opts.ipv4),
+        ipv6: { enabled: false },
+      });
+      ipInterface = bridge;
+    }
+    interfaces.push(...ethernetPorts);
+  } else {
+    const linkAggOptions: Record<string, string> = { miimon: String(opts.miimon) };
+    if (
+      opts.xmitHashPolicy &&
+      xmitHashPoliciesForMode(opts.bondMode).some((p) => p.value === opts.xmitHashPolicy)
+    ) {
+      linkAggOptions.xmit_hash_policy = opts.xmitHashPolicy;
+    }
+    interfaces = [
+      {
+        name: opts.bondName,
+        type: 'bond',
+        state: 'up',
+        ipv4: ipv4Spec(opts.ipv4),
+        ipv6: { enabled: false },
+        'link-aggregation': {
+          mode: opts.bondMode,
+          options: linkAggOptions,
+          port: uniquePorts,
+        },
+      },
+      ...ethernetPorts,
+    ];
+  }
 
   const desired: Record<string, unknown> = { interfaces };
 
@@ -871,7 +1019,7 @@ export function buildBondDesiredState(opts: {
         {
           destination: '0.0.0.0/0',
           'next-hop-address': opts.ipv4.gateway.trim(),
-          'next-hop-interface': opts.bondName,
+          'next-hop-interface': ipInterface,
           'table-id': 254,
         },
       ],
@@ -890,6 +1038,7 @@ function buildNncp(opts: {
   ports: string[];
   ipv4: BondIpv4Config;
   xmitHashPolicy?: XmitHashPolicy;
+  rebalanceInterval?: string;
 }): NncpResource {
   return {
     apiVersion: 'nmstate.io/v1',
@@ -910,6 +1059,7 @@ function buildNncp(opts: {
         ports: opts.ports,
         ipv4: opts.ipv4,
         xmitHashPolicy: opts.xmitHashPolicy,
+        rebalanceInterval: opts.rebalanceInterval,
       }),
     },
   };
@@ -930,6 +1080,8 @@ export function planMcpNncps(opts: {
   miimon: string;
   ipv4: BondIpv4Config;
   xmitHashPolicy?: XmitHashPolicy;
+  /** OVS only: `bond-rebalance-interval` in ms; "0" disables rebalancing. */
+  rebalanceInterval?: string;
   /** NNCP names created in this browser session — do not treat as a name conflict. */
   ignoreNncpNames?: string[];
   /** Bond interface names created in this browser session — do not treat as a name conflict. */
@@ -954,10 +1106,16 @@ export function planMcpNncps(opts: {
     suggestedBondName,
   };
 
-  const nameIssue = validateBondName(opts.bondName);
+  const ovs = isOvsBondMode(opts.bondMode);
+  const nameIssue = validateBondName(opts.bondName, opts.bondMode);
   if (nameIssue) issues.push(nameIssue);
-  const miimonIssue = validateMiimon(opts.miimon);
-  if (miimonIssue) issues.push(miimonIssue);
+  if (ovs) {
+    const rebalanceIssue = validateRebalanceInterval(opts.rebalanceInterval ?? '');
+    if (rebalanceIssue) issues.push(rebalanceIssue);
+  } else {
+    const miimonIssue = validateMiimon(opts.miimon);
+    if (miimonIssue) issues.push(miimonIssue);
+  }
   const ipv4Issue = validateIpv4(opts.ipv4);
   if (ipv4Issue) issues.push(ipv4Issue);
 
@@ -1038,6 +1196,29 @@ export function planMcpNncps(opts: {
     }
   }
 
+  const bondNameTaken = nodesWithBond.length > 0 || conflictingNncps.length > 0;
+  if (ovs && bondName && !nameIssue && !bondNameTaken && !ignoreBond.has(bondName)) {
+    const bridge = ovsBridgeName(bondName);
+    const bridgeNodes = nodesWithInterfaceName(opts.nnsList, targetNodeNames, bridge);
+    const bridgeNncps = nncpsDefiningNameForNodes(
+      opts.nncps,
+      opts.nodes,
+      targetNodeNames,
+      bridge,
+    ).filter((name) => !ignoreNncp.has(name));
+    if (ports.includes(bridge)) {
+      issues.push({
+        key: 'Bridge {{bridge}} collides with a selected interface',
+        values: { bridge },
+      });
+    } else if (bridgeNodes.length > 0 || bridgeNncps.length > 0) {
+      issues.push({
+        key: 'OVS bridge {{bridge}} (derived from the bond name) already exists. Pick another bond name.',
+        values: { bridge },
+      });
+    }
+  }
+
   if (opts.selectedGroups.some(isControlPlaneMcp)) {
     warnings.push({
       key: 'Bonding NICs on control-plane nodes can disrupt cluster networking if you select the primary interface.',
@@ -1077,7 +1258,8 @@ export function planMcpNncps(opts: {
       miimon: opts.miimon,
       ports,
       ipv4: opts.ipv4,
-      xmitHashPolicy: opts.xmitHashPolicy,
+      xmitHashPolicy: ovs ? undefined : opts.xmitHashPolicy,
+      rebalanceInterval: ovs ? (opts.rebalanceInterval ?? '').trim() : undefined,
     });
   });
 

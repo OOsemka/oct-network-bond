@@ -51,3 +51,7 @@
 .netbond-remove-wrap {
   display: inline-block;
 }
+
+.netbond-rebalance-disable {
+  margin-top: var(--pf-t--global--spacer--sm, 8px);
+}
