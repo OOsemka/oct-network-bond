@@ -74,6 +74,7 @@ import {
   NncpKind,
   XmitHashPolicy,
   XMIT_HASH_POLICIES,
+  NNCP_MAX_UNAVAILABLE,
   supportsXmitHashPolicy,
   xmitHashPoliciesForMode,
   isOvsBondMode,
@@ -487,6 +488,7 @@ const NetworkBondPage: FC = () => {
                 spec: {
                   ...(current.spec || {}),
                   nodeSelector: current.spec?.nodeSelector || {},
+                  maxUnavailable: NNCP_MAX_UNAVAILABLE,
                   desiredState: plan.desiredState,
                 },
               } as unknown as K8sResourceCommon,

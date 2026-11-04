@@ -177,9 +177,17 @@ export type NncpResource = {
   };
   spec: {
     nodeSelector: Record<string, string>;
+    /** Nodes NMState reconfigures at once (NNCP_MAX_UNAVAILABLE). */
+    maxUnavailable?: number | string;
     desiredState: Record<string, unknown>;
   };
 };
+
+/**
+ * Policies written by this tool change one node at a time, so a bad bond never
+ * takes several nodes' networks (and ODF/etcd members) down together.
+ */
+export const NNCP_MAX_UNAVAILABLE = 1;
 
 export type K8sCondition = {
   type?: string;
@@ -1052,6 +1060,7 @@ function buildNncp(opts: {
     },
     spec: {
       nodeSelector: opts.nodeSelector,
+      maxUnavailable: NNCP_MAX_UNAVAILABLE,
       desiredState: buildBondDesiredState({
         bondName: opts.bondName,
         bondMode: opts.bondMode,

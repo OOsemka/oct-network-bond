@@ -29,6 +29,7 @@ import {
   NodeNetworkStateKind,
   NmstateInterfaceStatus,
   PlanMessage,
+  NNCP_MAX_UNAVAILABLE,
   OVS_BRIDGE_PREFIX,
   lagPortNames,
   nodeMatchesNncpSelector,
@@ -869,6 +870,7 @@ export function planBondRemoval(opts: {
         },
         spec: {
           nodeSelector: target.nodeSelector,
+          maxUnavailable: NNCP_MAX_UNAVAILABLE,
           desiredState,
         },
       });
