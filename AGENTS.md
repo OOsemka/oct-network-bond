@@ -41,7 +41,7 @@ Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`oc
 | Type | Mode | Description | Warnings |
 | --- | --- | --- | --- |
 | Linux | `active-backup` (1) | Active-backup | Safe default |
-| Linux | `balance-xor` (2) | XOR | Not recommended; exposes xmit hash policy (incl. `vlan+srcmac`) |
+| Linux | `balance-xor` (2) | XOR | Not recommended; requires a static LAG on the switch (port-channel without LACP); exposes xmit hash policy (incl. `vlan+srcmac`) |
 | Linux | `802.3ad` (4) | LACP | Requires switch support; exposes xmit hash policy |
 | Linux | `balance-tlb` (5) | Adaptive transmit load balancing | Not recommended |
 | Linux | `balance-alb` (6) | Adaptive load balancing | Not recommended |
