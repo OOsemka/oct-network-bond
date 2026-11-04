@@ -13,7 +13,7 @@ export type BondMode =
   | 'balance-alb'
   | 'balance-slb';
 
-export type XmitHashPolicy = 'layer2' | 'layer2+3' | 'layer3+4';
+export type XmitHashPolicy = 'layer2' | 'layer2+3' | 'layer3+4' | 'vlan+srcmac';
 
 export type BondModeInfo = {
   value: BondMode;
@@ -27,26 +27,47 @@ export const XMIT_HASH_POLICIES: {
   value: XmitHashPolicy;
   label: string;
   description: string;
+  /** Bond modes this policy is offered for. */
+  modes: BondMode[];
 }[] = [
   {
     value: 'layer2',
     label: 'layer2',
     description:
       'Hashes on source/destination MAC addresses. Best for traffic staying within the same L2 segment.',
+    modes: ['802.3ad', 'balance-xor'],
   },
   {
     value: 'layer2+3',
     label: 'layer2+3',
     description:
       'Hashes on MAC + IP addresses. Better distribution for routed traffic across subnets.',
+    modes: ['802.3ad', 'balance-xor'],
   },
   {
     value: 'layer3+4',
     label: 'layer3+4',
     description:
       'Hashes on IP addresses + TCP/UDP ports. Best distribution for diverse traffic patterns (many connections to different ports).',
+    modes: ['802.3ad', 'balance-xor'],
+  },
+  {
+    value: 'vlan+srcmac',
+    label: 'vlan+srcmac',
+    description:
+      'Hashes on VLAN ID + source MAC vendor and device bytes. Useful when many VLAN sub-interfaces or VMs with distinct MACs share the bond and the switch does not support LACP.',
+    modes: ['balance-xor'],
   },
 ];
+
+/** Transmit hash policies offered for a bond mode (empty when the mode has none). */
+export function xmitHashPoliciesForMode(mode: BondMode): typeof XMIT_HASH_POLICIES {
+  return XMIT_HASH_POLICIES.filter((p) => p.modes.includes(mode));
+}
+
+export function supportsXmitHashPolicy(mode: BondMode): boolean {
+  return xmitHashPoliciesForMode(mode).length > 0;
+}
 
 export type Ipv4Mode = 'none' | 'dhcp' | 'static';
 
@@ -816,7 +837,10 @@ export function buildBondDesiredState(opts: {
 }): Record<string, unknown> {
   const uniquePorts = Array.from(new Set(opts.ports));
   const linkAggOptions: Record<string, string> = { miimon: String(opts.miimon) };
-  if (opts.bondMode === '802.3ad' && opts.xmitHashPolicy) {
+  if (
+    opts.xmitHashPolicy &&
+    xmitHashPoliciesForMode(opts.bondMode).some((p) => p.value === opts.xmitHashPolicy)
+  ) {
     linkAggOptions.xmit_hash_policy = opts.xmitHashPolicy;
   }
   const interfaces: Record<string, unknown>[] = [

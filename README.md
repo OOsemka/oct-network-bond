@@ -22,7 +22,7 @@ Old plugin ID `community-network-bond` requires a reinstall.
 | Mode | Name | Notes |
 | --- | --- | --- |
 | 1 | `active-backup` | Safe default. |
-| 2 | `balance-xor` | XOR hash. UI warns "not recommended". |
+| 2 | `balance-xor` | XOR hash. UI warns "not recommended". Xmit hash policy: `layer2`, `layer2+3`, `layer3+4`, `vlan+srcmac`. |
 | 4 | `802.3ad` (LACP) | Requires switch support. Xmit hash policy: `layer2`, `layer2+3`, `layer3+4`. |
 | 5 | `balance-tlb` | Adaptive transmit LB. UI warns "not recommended". |
 | 6 | `balance-alb` | Adaptive LB. UI warns "not recommended". |

@@ -74,6 +74,8 @@ import {
   NncpKind,
   XmitHashPolicy,
   XMIT_HASH_POLICIES,
+  supportsXmitHashPolicy,
+  xmitHashPoliciesForMode,
   buildMcpNicGroups,
   canSelectMcpWith,
   formatSpeed,
@@ -283,7 +285,7 @@ const NetworkBondPage: FC = () => {
         bondMode,
         miimon,
         ipv4,
-        xmitHashPolicy: bondMode === '802.3ad' ? xmitHashPolicy : undefined,
+        xmitHashPolicy: supportsXmitHashPolicy(bondMode) ? xmitHashPolicy : undefined,
         ignoreNncpNames: createdNames,
         ignoreBondNames: createdBondName ? [createdBondName] : [],
       }),
@@ -961,7 +963,16 @@ const NetworkBondPage: FC = () => {
                       <FormSelect
                         id="netbond-mode"
                         value={bondMode}
-                        onChange={(_event, value) => setBondMode(value as BondMode)}
+                        onChange={(_event, value) => {
+                          const mode = value as BondMode;
+                          setBondMode(mode);
+                          // Fall back to layer2 if the current policy isn't valid for the new mode.
+                          if (
+                            !xmitHashPoliciesForMode(mode).some((p) => p.value === xmitHashPolicy)
+                          ) {
+                            setXmitHashPolicy('layer2');
+                          }
+                        }}
                       >
                         {BOND_MODES.filter((m) => m.category === 'linux').map((m) => (
                           <FormSelectOption
@@ -1006,9 +1017,13 @@ const NetworkBondPage: FC = () => {
                       })()}
                     </FormGroup>
 
-                    {bondMode === '802.3ad' && (
+                    {supportsXmitHashPolicy(bondMode) && (
                       <FormGroup
-                        label={t('LACP Transmit Hash Policy')}
+                        label={
+                          bondMode === '802.3ad'
+                            ? t('LACP Transmit Hash Policy')
+                            : t('Transmit Hash Policy')
+                        }
                         fieldId="netbond-xmit-hash"
                       >
                         <FormSelect
@@ -1018,7 +1033,7 @@ const NetworkBondPage: FC = () => {
                             setXmitHashPolicy(value as XmitHashPolicy)
                           }
                         >
-                          {XMIT_HASH_POLICIES.map((p) => (
+                          {xmitHashPoliciesForMode(bondMode).map((p) => (
                             <FormSelectOption
                               key={p.value}
                               value={p.value}
