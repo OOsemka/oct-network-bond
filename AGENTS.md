@@ -57,6 +57,8 @@ Two axes in the catalog: git tag **`v1.x.x`** (semver) and optional branch **`oc
 
 MCPs are watched cluster-wide. `buildMcpNicGroups` fingerprints physical NIC names per pool (identical vs mixed NICs). UI checkboxes only allow combining MCPs with the same NIC fingerprint. `planNncpTargets`: one covering `nodeSelector` for compact/SNO overlap; one NNCP per MCP when disjoint; per-hostname selectors to avoid double-apply when MCPs overlap.
 
+**Node targeting and per-node static IPv4** (`src/utils/node-ipv4.ts`, same file in `oct-network-bridge`): the pool card lists the nodes of the selected pools, all ticked; unticked names are kept in `excludedNodeNames` so new pool members start included. `planMcpNncps` takes `targetNodeNames` and `nodeAddresses`; when only some pool nodes are selected, when static IPv4 is chosen, or when pools overlap, it writes one NNCP per node (`perNodeTargets`: `kubernetes.io/hostname` selector, name `<bond>-<node>`, kept unique). Static IPv4 takes one address per node with a shared prefix length and gateway; `checkNodeAddresses` blocks invalid or duplicate addresses, network/broadcast addresses, the gateway itself and addresses outside the gateway's subnet, and warns about addresses already present in NodeNetworkState or spread over different subnets.
+
 ## Navigation (React Router v6 via v5-compat)
 
 Uses `useNavigate` from `react-router-dom-v5-compat` (^6.30.0). Breadcrumb and "Back to Network" navigate to `/community-tools/network`. NNCP deep links use plain `href` to the console k8s resource path, not `useNavigate`. Route registered at `/community-tools/network/bond` via `console-extensions.json`.

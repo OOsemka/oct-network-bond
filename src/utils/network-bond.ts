@@ -3,6 +3,8 @@
  * NodeNetworkConfigurationPolicy is an implementation detail; the UI talks about bonds.
  */
 
+import { checkNodeAddresses, perNodeTargets } from './node-ipv4';
+
 export type NodeRole = 'control-plane' | 'worker' | 'other';
 
 export type BondMode =
@@ -1095,10 +1097,17 @@ export function planMcpNncps(opts: {
   ignoreNncpNames?: string[];
   /** Bond interface names created in this browser session — do not treat as a name conflict. */
   ignoreBondNames?: string[];
+  /** Pool nodes to target; default all nodes of the selected pools. */
+  targetNodeNames?: string[];
+  /** Static IPv4: one address per node name (shared prefix length and gateway from `ipv4`). */
+  nodeAddresses?: Record<string, string>;
 }): NncpPlan {
   const issues: PlanMessage[] = [];
   const warnings: PlanMessage[] = [];
-  const targetNodeNames = uniqueNodeNames(opts.selectedGroups);
+  const poolNodeNames = uniqueNodeNames(opts.selectedGroups);
+  const targetNodeNames = opts.targetNodeNames
+    ? opts.targetNodeNames.filter((n) => poolNodeNames.includes(n)).sort()
+    : poolNodeNames;
   const usedNames = collectUsedBondNames(
     opts.nnsList,
     opts.nncps,
@@ -1125,11 +1134,28 @@ export function planMcpNncps(opts: {
     const miimonIssue = validateMiimon(opts.miimon);
     if (miimonIssue) issues.push(miimonIssue);
   }
-  const ipv4Issue = validateIpv4(opts.ipv4);
-  if (ipv4Issue) issues.push(ipv4Issue);
+  if (opts.ipv4.mode === 'static') {
+    const addressCheck = checkNodeAddresses({
+      nodeNames: targetNodeNames,
+      addresses: opts.nodeAddresses || {},
+      prefixLength: opts.ipv4.prefixLength ?? 24,
+      gateway: opts.ipv4.gateway,
+      nns: opts.nnsList,
+    });
+    issues.push(...addressCheck.issues);
+    warnings.push(...addressCheck.warnings);
+  } else {
+    const ipv4Issue = validateIpv4(opts.ipv4);
+    if (ipv4Issue) issues.push(ipv4Issue);
+  }
 
   if (opts.selectedGroups.length === 0) {
     issues.push({ key: 'Select at least one MachineConfigPool' });
+    return empty;
+  }
+
+  if (targetNodeNames.length === 0) {
+    issues.push({ key: 'Select at least one node' });
     return empty;
   }
 
@@ -1234,39 +1260,50 @@ export function planMcpNncps(opts: {
     });
   }
 
-  if (opts.ipv4.mode === 'static' && targetNodeNames.length > 1) {
-    issues.push({
-      key: 'Static IPv4 can only be applied when a single node is targeted. Use L2 only or DHCP for multiple nodes.',
-    });
-  }
-
   if (issues.length > 0) {
     return empty;
   }
 
-  const { mode, targets } = planNncpTargets(opts.selectedGroups);
+  const mcpPlan = planNncpTargets(opts.selectedGroups);
+  // One policy per node when the user narrowed the pools to some of their
+  // nodes, when each node gets its own static address, or when pools overlap.
+  const perNode =
+    mcpPlan.mode === 'per-node' ||
+    opts.ipv4.mode === 'static' ||
+    targetNodeNames.length < poolNodeNames.length;
+  const mode: 'mcp' | 'per-node' = perNode ? 'per-node' : 'mcp';
   const selectedMcpSuffix = opts.selectedGroups
     .map((g) => g.mcpName)
     .sort()
     .join('-');
 
+  const targets: { name: string; nodeSelector: Record<string, string>; nodeName?: string }[] = perNode
+    ? perNodeTargets(targetNodeNames, bondName, sanitizeK8sName).map((t) => ({
+        name: t.policyName,
+        nodeSelector: t.nodeSelector,
+        nodeName: t.nodeName,
+      }))
+    : mcpPlan.targets.map((target) => ({
+        name:
+          mcpPlan.targets.length === 1
+            ? sanitizeK8sName(`${bondName}-${selectedMcpSuffix}`)
+            : sanitizeK8sName(`${bondName}-${target.mcpName || 'node'}`),
+        nodeSelector: target.nodeSelector,
+      }));
+
   const policies = targets.map((target) => {
-    let name: string;
-    if (mode === 'per-node') {
-      name = sanitizeK8sName(`${bondName}-${target.nodeNames[0]}`);
-    } else if (targets.length === 1) {
-      name = sanitizeK8sName(`${bondName}-${selectedMcpSuffix}`);
-    } else {
-      name = sanitizeK8sName(`${bondName}-${target.mcpName || 'node'}`);
-    }
+    const ipv4: BondIpv4Config =
+      opts.ipv4.mode === 'static' && target.nodeName
+        ? { ...opts.ipv4, address: (opts.nodeAddresses?.[target.nodeName] || '').trim() }
+        : opts.ipv4;
     return buildNncp({
-      name,
+      name: target.name,
       nodeSelector: target.nodeSelector,
       bondName,
       bondMode: opts.bondMode,
       miimon: opts.miimon,
       ports,
-      ipv4: opts.ipv4,
+      ipv4,
       xmitHashPolicy: ovs ? undefined : opts.xmitHashPolicy,
       rebalanceInterval: ovs ? (opts.rebalanceInterval ?? '').trim() : undefined,
     });
