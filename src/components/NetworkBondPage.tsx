@@ -101,6 +101,7 @@ import {
   planBondRemoval,
   sleep,
 } from '../utils/bond-remove';
+import { fillSequentialAddresses, isIpv4, selectTargetNodes } from '../utils/node-ipv4';
 import { toYaml } from '../utils/yaml';
 import dashboardLogger from '../utils/logger';
 import CommunityDisclaimer from './CommunityDisclaimer';
@@ -179,9 +180,12 @@ const NetworkBondPage: FC = () => {
   );
   const [rebalanceDisabled, setRebalanceDisabled] = useState(false);
   const [ipv4Mode, setIpv4Mode] = useState<Ipv4Mode>('none');
-  const [ipAddress, setIpAddress] = useState('');
   const [prefixLength, setPrefixLength] = useState('24');
   const [gateway, setGateway] = useState('');
+  /** Nodes of the selected pools the user left out (new pool members start included). */
+  const [excludedNodeNames, setExcludedNodeNames] = useState<string[]>([]);
+  /** Static IPv4 address per node name. */
+  const [nodeAddresses, setNodeAddresses] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ policyNames: string[]; bondName: string }>({
@@ -261,10 +265,24 @@ const NetworkBondPage: FC = () => {
     setCreateError(null);
   }, [selectedFingerprint]);
 
-  const targetNodeNames = useMemo(
+  /** Every node of the selected pools. */
+  const poolNodeNames = useMemo(
     () => Array.from(new Set(selectedGroups.flatMap((g) => g.nodeNames))).sort(),
     [selectedGroups],
   );
+  /** The pool nodes the bond is applied to. */
+  const targetNodeNames = useMemo(
+    () => selectTargetNodes(poolNodeNames, excludedNodeNames),
+    [poolNodeNames, excludedNodeNames],
+  );
+
+  useEffect(() => {
+    // Forget exclusions of nodes that are no longer in any selected pool.
+    setExcludedNodeNames((prev) => {
+      const next = prev.filter((n) => poolNodeNames.includes(n));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [poolNodeNames]);
 
   const layoutNics: LayoutNic[] = useMemo(() => {
     if (!selectedFingerprint) return [];
@@ -274,11 +292,10 @@ const NetworkBondPage: FC = () => {
   const ipv4: BondIpv4Config = useMemo(
     () => ({
       mode: ipv4Mode,
-      address: ipAddress,
       prefixLength: parseInt(prefixLength, 10) || 24,
       gateway,
     }),
-    [ipv4Mode, ipAddress, prefixLength, gateway],
+    [ipv4Mode, prefixLength, gateway],
   );
 
   const ovsMode = isOvsBondMode(bondMode);
@@ -301,8 +318,12 @@ const NetworkBondPage: FC = () => {
         rebalanceInterval: effectiveRebalanceInterval,
         ignoreNncpNames: createdNames,
         ignoreBondNames: createdBondName ? [createdBondName] : [],
+        targetNodeNames,
+        nodeAddresses,
       }),
     [
+      targetNodeNames,
+      nodeAddresses,
       selectedGroups,
       selectedPorts,
       nodes,
@@ -338,6 +359,32 @@ const NetworkBondPage: FC = () => {
     },
     [clearCreated],
   );
+
+  const toggleNode = useCallback(
+    (name: string, checked: boolean) => {
+      setExcludedNodeNames((prev) => (checked ? prev.filter((x) => x !== name) : [...prev, name]));
+      dashboardLogger.info(
+        LOG_ACTION,
+        'Node selection changed',
+        `${checked ? 'selected' : 'deselected'} ${name}`,
+      );
+      clearCreated();
+    },
+    [clearCreated],
+  );
+
+  const setNodeAddress = useCallback((nodeName: string, value: string) => {
+    setNodeAddresses((prev) => ({ ...prev, [nodeName]: value }));
+  }, []);
+
+  const fillAddresses = useCallback(() => {
+    const first = targetNodeNames[0];
+    if (!first) return;
+    setNodeAddresses((prev) => ({
+      ...prev,
+      ...fillSequentialAddresses(prev[first] || '', targetNodeNames),
+    }));
+  }, [targetNodeNames]);
 
   const togglePort = useCallback(
     (name: string, checked: boolean) => {
@@ -822,6 +869,32 @@ const NetworkBondPage: FC = () => {
                             </HelperText>
                           </FormHelperText>
                         </FormGroup>
+                        {poolNodeNames.length > 0 && (
+                          <FormGroup label={t('Nodes')} fieldId="netbond-nodes" isRequired>
+                            <div className="netbond-node-list">
+                              {poolNodeNames.map((nodeName) => (
+                                <Checkbox
+                                  key={nodeName}
+                                  id={`netbond-node-${nodeName}`}
+                                  label={nodeName}
+                                  isChecked={targetNodeNames.includes(nodeName)}
+                                  onChange={(_event, isChecked) =>
+                                    toggleNode(nodeName, Boolean(isChecked))
+                                  }
+                                />
+                              ))}
+                            </div>
+                            <FormHelperText>
+                              <HelperText>
+                                <HelperTextItem>
+                                  {t(
+                                    'Untick nodes to leave them out. When only some nodes of a pool are selected, or with static IPv4, one policy is created per node.',
+                                  )}
+                                </HelperTextItem>
+                              </HelperText>
+                            </FormHelperText>
+                          </FormGroup>
+                        )}
                       </Form>
                     </StackItem>
                   </Stack>
@@ -1162,13 +1235,49 @@ const NetworkBondPage: FC = () => {
 
                     {ipv4Mode === 'static' && (
                       <>
-                        <FormGroup label={t('IP Address')} fieldId="netbond-ip" isRequired>
-                          <TextInput
-                            id="netbond-ip"
-                            value={ipAddress}
-                            onChange={(_event, value) => setIpAddress(value)}
-                            placeholder="192.168.1.10"
-                          />
+                        <FormGroup label={t('IP addresses')} fieldId="netbond-ip" isRequired>
+                          {targetNodeNames.length === 0 ? (
+                            <HelperText>
+                              <HelperTextItem>{t('Select nodes to assign addresses.')}</HelperTextItem>
+                            </HelperText>
+                          ) : (
+                            <>
+                              <Table aria-label={t('IP addresses')} variant="compact">
+                                <Thead>
+                                  <Tr>
+                                    <Th>{t('Node')}</Th>
+                                    <Th>{t('IPv4 address')}</Th>
+                                  </Tr>
+                                </Thead>
+                                <Tbody>
+                                  {targetNodeNames.map((nodeName, i) => (
+                                    <Tr key={nodeName}>
+                                      <Td dataLabel={t('Node')}>{nodeName}</Td>
+                                      <Td dataLabel={t('IPv4 address')}>
+                                        <TextInput
+                                          id={i === 0 ? 'netbond-ip' : `netbond-ip-${nodeName}`}
+                                          aria-label={t('IPv4 address for {{node}}', { node: nodeName })}
+                                          value={nodeAddresses[nodeName] || ''}
+                                          onChange={(_event, value) => setNodeAddress(nodeName, value)}
+                                          placeholder="192.168.1.10"
+                                        />
+                                      </Td>
+                                    </Tr>
+                                  ))}
+                                </Tbody>
+                              </Table>
+                              {targetNodeNames.length > 1 && (
+                                <Button
+                                  variant="link"
+                                  isInline
+                                  onClick={fillAddresses}
+                                  isDisabled={!isIpv4(nodeAddresses[targetNodeNames[0]])}
+                                >
+                                  {t('Fill the other nodes sequentially from the first address')}
+                                </Button>
+                              )}
+                            </>
+                          )}
                         </FormGroup>
                         <FormGroup label={t('Prefix Length')} fieldId="netbond-prefix" isRequired>
                           <TextInput
@@ -1208,7 +1317,7 @@ const NetworkBondPage: FC = () => {
                 <CardBody>
                   <Stack hasGutter>
                     {plan.warnings.map((w) => (
-                      <StackItem key={w.key}>
+                      <StackItem key={w.key + JSON.stringify(w.values || {})}>
                         <Alert variant="warning" title={t('Warning')} isInline>
                           {t(w.key, w.values)}
                         </Alert>
@@ -1282,7 +1391,9 @@ const NetworkBondPage: FC = () => {
                               ? t('L2 only (no IP)')
                               : ipv4Mode === 'dhcp'
                                 ? t('DHCP')
-                                : `${ipAddress}/${prefixLength}`}
+                                : plan.targetNodeNames
+                                    .map((n) => `${n}: ${(nodeAddresses[n] || '').trim() || '—'}/${prefixLength}`)
+                                    .join(', ')}
                           </DescriptionListDescription>
                         </DescriptionListGroup>
                         <DescriptionListGroup>

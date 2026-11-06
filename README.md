@@ -37,6 +37,7 @@ Old plugin ID `community-network-bond` requires a reinstall.
 
 - **Single-NIC bond** is allowed but shows a warning ("single-NIC bond provides no redundancy").
 - **MachineConfigPool targeting:** MCPs fingerprinted by physical NIC names. Only MCPs with identical NIC sets can be combined. One NNCP per disjoint MCP; per-hostname selectors when MCPs overlap.
+- **Node targeting and per-node static IPv4:** after picking pools, untick nodes to leave them out (down to a single node). Static IPv4 takes one address per selected node (shared prefix length and gateway, optional sequential fill) and creates one policy per node, pinned with `kubernetes.io/hostname`.
 
 ## Navigation
 

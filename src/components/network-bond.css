@@ -36,6 +36,12 @@
   gap: var(--pf-t--global--spacer--sm, 8px);
 }
 
+.netbond-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-t--global--spacer--xs, 4px);
+}
+
 .netbond-mcp-item {
   max-width: 48rem;
 }
